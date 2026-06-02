@@ -16,12 +16,18 @@ gadget with **CDC-ECM** (macOS-native networking) and enables the firmware's bui
 
 Read [README.md](README.md) first, then [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
 
+Two video-out paths: **ECM+RTSP** (simple, ~3s latency) and the **raw H.265 tap** (low latency,
+LD_PRELOAD). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md) and
+[docs/lowlatency-tap.md](docs/lowlatency-tap.md).
+
 ## Layout
-- `device/run_dbg.sh` — boot hook installed on the goggle (builds ECM gadget + enables RTSP).
-- `tools/goggle.py` — UART console helper (`upload`/`run`/`reboot`/`shell`) at 1228800 baud.
-- `tools/deploy-goggle.sh` — one-command deploy (upload hook + buildtime + reboot).
-- `tools/view.sh` — low-latency `ffplay` of the stream.
-- `docs/` — solution, UVC dead-end, Pro-vs-non-Pro firmware diff.
+- `device/run_dbg.sh` — ECM+RTSP boot hook (ECM gadget + RTSP enable).
+- `device/run_dbg-acmtap.sh` + `device/videotap.c` — low-latency tap: ecm+3×acm gadget + an
+  LD_PRELOAD shim that tees raw received H.265 to USB-ACM.
+- `tools/goggle.py` — UART console helper (`upload` text / `bupload` binary / `run`/`reboot`/`shell`).
+- `tools/deploy-goggle.sh` / `tools/deploy-tap.sh` — one-command deploys (RTSP / tap) over UART.
+- `tools/view.sh` (RTSP) / `tools/view-tap.sh`+`view-tap.py`+`serial_to_pipe.py` (tap).
+- `docs/` — RTSP solution, low-latency tap, UVC dead-end, Pro-vs-non-Pro firmware diff.
 - `images/` — firmware `.img` (git-ignored); `photos/` — board shots.
 
 ## Device access (UART console)
@@ -62,4 +68,10 @@ Use `ubireader_extract_images` to get the `.ubifs`, then a patched reader. v2.0.
 - Known rough edges: ~2–3 s latency; stream stops after a few connect/disconnect cycles
   (mini-RTSP session leak) until reboot.
 - The goggle USB gadget IDs as product "Sirius" / mfr "Artosyn" / serial ZBBM5DZFMP; its ACM
-  shows on the Mac as `/dev/cu.usbmodemZBBM5DZFMP4` (the enumeration tell).
+  shows on the Mac as `/dev/cu.usbmodem*` (the enumeration tell).
+- **Low-latency tap:** the received H.265 is two low-delay streams decoded on VDEC chn0 (1920×560)
+  + chn1 (1920×552), 32px overlap. The shim interposes `AR_MPI_VDEC_SendStream(chn, pstStream, ms)`
+  (interposable across libs); `VDEC_STREAM_S` = `+0x00 u32 len`, `+0x1c u8* data` (virtual, H.265
+  Annex-B). It forwards from a clean keyframe. Start `view-tap.sh` BEFORE powering the drone.
+- Binary files reach the device over UART via `goggle.py bupload` (printf-hex; device has no
+  base64/xxd). The ECM-network `wget` path is flaky (macOS may not bind ECM on the tap gadget).

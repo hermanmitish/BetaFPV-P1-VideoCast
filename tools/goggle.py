@@ -66,6 +66,23 @@ class Goggle:
                 return True
         self.cmd("stty echo")
         return False
+    def bupload(self, local, remote, chunk=200):
+        """Upload a BINARY file over the UART via printf hex escapes (no base64/ECM needed)."""
+        data = open(local, "rb").read()
+        want = hashlib.md5(data).hexdigest()
+        self.wake(); self.cmd("stty -echo")
+        for attempt in range(1, 4):
+            self.cmd(f": > {remote}")                       # truncate
+            for i in range(0, len(data), chunk):
+                esc = "".join("\\x%02x" % b for b in data[i:i+chunk])
+                self._slow(f"printf '{esc}' >> {remote}\r".encode()); self._drain(0.3)
+            out = self.cmd(f"md5sum {remote}", 2.0)
+            got = next((tok for tok in out.split()
+                        if len(tok) == 32 and all(ch in "0123456789abcdef" for ch in tok)), "")
+            print(f"  bupload attempt {attempt}: {'OK' if got == want else 'mismatch, retrying'}")
+            if got == want:
+                self.cmd("stty echo"); return True
+        self.cmd("stty echo"); return False
     def reboot(self):
         self.wake(); self._slow(b"reboot\r")
 
@@ -76,6 +93,7 @@ def main():
     sub.add_parser("reboot"); sub.add_parser("shell")
     r = sub.add_parser("run"); r.add_argument("cmd")
     u = sub.add_parser("upload"); u.add_argument("local"); u.add_argument("remote")
+    b = sub.add_parser("bupload"); b.add_argument("local"); b.add_argument("remote")
     a = ap.parse_args()
     g = Goggle(a.port or find_port(), a.baud)
     if a.action == "run":
@@ -83,6 +101,9 @@ def main():
     elif a.action == "upload":
         ok = g.upload(a.local, a.remote)
         print("UPLOAD OK" if ok else "UPLOAD FAILED"); sys.exit(0 if ok else 1)
+    elif a.action == "bupload":
+        ok = g.bupload(a.local, a.remote)
+        print("BUPLOAD OK" if ok else "BUPLOAD FAILED"); sys.exit(0 if ok else 1)
     elif a.action == "reboot":
         g.reboot(); print("rebooting...")
     elif a.action == "shell":

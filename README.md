@@ -4,37 +4,47 @@ Tools and notes for getting the **BetaFPV P1 HD (ArLink VR01 / Artosyn AR9301) n
 goggles** to stream their live FPV video to a computer **over the existing USB-C port** —
 no Wi-Fi module, no capture card, no permanent hardware mods.
 
-It works by replacing the goggle's USB gadget with a **CDC-ECM** network interface (which
-macOS supports natively, unlike the stock RNDIS) and enabling the firmware's built-in
-**RTSP** server. Output: `rtsp://10.55.0.1:554/venc8/stream` (H.265 1080p60), viewable in
-VLC/ffplay or pipeable into OBS → Virtual Camera.
+Two paths, both full 1080p over USB:
+- **ECM + RTSP** (simple) — swap the USB gadget for a **CDC-ECM** network interface (macOS speaks
+  it natively, unlike stock RNDIS) and enable the firmware's **RTSP** server:
+  `rtsp://10.55.0.1:554/venc8/stream`, viewable in VLC/ffplay or OBS → Virtual Camera. ~3 s
+  latency (serves the venc8 re-encode). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
+- **Raw H.265 tap** (low latency) — an `LD_PRELOAD` shim tees the *received* H.265 (two low-delay
+  strips) straight to USB-ACM, no re-encode; the host decodes both and stacks them to 1080p. Much
+  lower latency. See [docs/lowlatency-tap.md](docs/lowlatency-tap.md).
 
 > The obvious "make it a UVC webcam" route is a hardware dead end on this model — its USB-2
 > controller won't enumerate a UVC gadget. See [docs/enable-uvc.md](docs/enable-uvc.md).
 
 ## Quick start
-1. Wire a 3.3V USB-TTL adapter to the goggle `DEBUG` header (`GND/TX0/RX0`, crossed, **1228800
-   baud**, solid ground). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
-2. Deploy: `tools/deploy-goggle.sh` (uploads the boot hook, reboots).
-3. Set the Mac's new ECM network adapter to `10.55.0.2 / 255.255.255.0`.
-4. Bind a drone, then: `tools/view.sh`.
+Both need a 3.3V USB-TTL adapter on the goggle `DEBUG` header (`GND/TX0/RX0`, crossed, **1228800
+baud**, solid ground) — see [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
+
+**ECM + RTSP:** `tools/deploy-goggle.sh` → set the Mac's new ECM adapter to `10.55.0.2/24` → bind a
+drone → `tools/view.sh`.
+
+**Low-latency tap:** `tools/deploy-tap.sh` (needs `zig`) → `tools/view-tap.sh` **then** power the drone.
 
 ## Layout
 | Path | What |
 |---|---|
-| `device/run_dbg.sh` | boot hook installed on the goggle (ECM gadget + RTSP enable) |
-| `tools/deploy-goggle.sh` | one-command deploy over UART |
-| `tools/goggle.py` | UART console helper (upload / run / reboot / shell) at 1228800 |
+| `device/run_dbg.sh` | ECM+RTSP boot hook for the goggle |
+| `device/run_dbg-acmtap.sh` | boot hook for the low-latency tap (ecm + 3×acm gadget) |
+| `device/videotap.c` | `LD_PRELOAD` shim that tees raw H.265 to USB-ACM |
+| `tools/deploy-goggle.sh` / `tools/deploy-tap.sh` | one-command deploys (RTSP / tap) over UART |
+| `tools/goggle.py` | UART console helper (`upload`/`bupload`/`run`/`reboot`/`shell`) at 1228800 |
 | `tools/view.sh` | low-latency `ffplay` of the RTSP stream |
+| `tools/view-tap.sh` / `view-tap.py` / `serial_to_pipe.py` | stack the two raw strips into a 1080p view |
 | `tools/p1-ota-extract.py` | unpack the OTA firmware partitions |
-| `docs/` | the full writeups (solution, UVC dead-end, firmware diff) |
-| `images/` | firmware `.img` files (git-ignored) |
-| `photos/` | board photos |
+| `docs/` | full writeups (RTSP, low-latency tap, UVC dead-end, firmware diff) |
+| `images/` | firmware `.img` files (git-ignored); `photos/` | board photos |
 
 ## Status / known issues
-Working end-to-end (verified on `P1_GND_VR04` v2.0.5 and v2.0.6). Rough edges:
-- ~2–3 s latency (client buffering + re-encode) — partially tunable.
-- Stream stops after a few connect/disconnect cycles until the goggle reboots (mini-RTSP
-  session leak) — not yet fixed.
+Working end-to-end (verified on `P1_GND_VR04` v2.0.5 and v2.0.6).
+- **RTSP:** ~3 s latency (re-encode); stream stops after a few connect/disconnect cycles until
+  reboot (mini-RTSP session leak).
+- **Tap:** much lower latency; start the viewer **before** powering the drone (it syncs at the first
+  keyframe); macOS may not bind ECM on the 4-function tap gadget (irrelevant — the tap uses ACM).
 
-Details and recovery steps in [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
+Details and recovery in [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md) and
+[docs/lowlatency-tap.md](docs/lowlatency-tap.md).
