@@ -1,0 +1,13 @@
+# firmware images (large, not for VCS)
+images/*.img
+*.img
+# macOS / editor cruft
+.DS_Store
+# build artifacts (legacy)
+*.o
+build/
+toolchain/
+arlink_stream
+# python
+__pycache__/
+*.pyc
