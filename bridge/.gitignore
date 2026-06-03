@@ -1,0 +1,9 @@
+# Buildroot builds out-of-tree (in ~/buildroot/output); nothing to ignore here yet.
+# If you ever symlink an output/ or dl/ in, ignore them:
+output/
+dl/
+*.img
+
+# Docker build env persistent state (buildroot checkout, output, dl cache)
+docker/.work/
+docker/images/

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Start the ArtLynk viewer service (waits for the goggle, decodes its H.265 tap to HDMI, reconnects
+# forever). Runs in the background so boot continues.
+case "$1" in
+	start)
+		echo "Starting artlynk-view"
+		/usr/bin/artlynk-view >/var/log/artlynk-view.log 2>&1 &
+		;;
+	stop)
+		killall artlynk-view gst-launch-1.0 2>/dev/null
+		;;
+	*) echo "Usage: $0 {start|stop}"; exit 1;;
+esac

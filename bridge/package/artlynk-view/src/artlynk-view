@@ -1,0 +1,49 @@
+#!/bin/sh
+# artlynk-view — wait for the goggle's H.265 tap, decode it to HDMI (KMS/DRM), reconnect forever.
+# Config in /etc/artlynk/bridge.conf (GOGGLE_IP/PORT, DECODE=hw|sw).
+[ -r /etc/artlynk/bridge.conf ] && . /etc/artlynk/bridge.conf
+GOGGLE_IP="${GOGGLE_IP:-10.55.0.1}"
+GOGGLE_PORT="${GOGGLE_PORT:-9000}"
+DECODE="${DECODE:-hw}"
+HOST_CIDR="${HOST_CIDR:-10.55.0.2/24}"
+
+log() { echo "[artlynk-view] $*"; }
+
+# The connect itself makes the goggle's tap force a keyframe, so we lock immediately.
+# tcpclientsrc -> h265parse -> (hw|sw) decode -> kmssink (direct to the HDMI plane, no compositor).
+hw_pipeline() {
+	gst-launch-1.0 -e \
+		tcpclientsrc host="$GOGGLE_IP" port="$GOGGLE_PORT" \
+		! queue max-size-buffers=0 max-size-bytes=0 max-size-time=0 leaky=downstream \
+		! h265parse ! v4l2slh265dec ! kmssink sync=false
+}
+sw_pipeline() {
+	gst-launch-1.0 -e \
+		tcpclientsrc host="$GOGGLE_IP" port="$GOGGLE_PORT" \
+		! queue leaky=downstream \
+		! h265parse ! avdec_h265 ! videoconvert ! kmssink sync=false
+}
+
+# make sure the USB-ECM link has our IP (in case S40usbnet ran before the goggle was plugged in)
+ensure_net() {
+	for n in /sys/class/net/*; do
+		drv=$(readlink "$n/device/driver" 2>/dev/null)
+		case "$drv" in *cdc_ether*)
+			IF=$(basename "$n")
+			ip addr show dev "$IF" | grep -q "${HOST_CIDR%/*}" || ip addr add "$HOST_CIDR" dev "$IF" 2>/dev/null
+			ip link set "$IF" up
+			return;;
+		esac
+	done
+}
+
+log "starting (goggle ${GOGGLE_IP}:${GOGGLE_PORT}, decode=${DECODE})"
+while true; do
+	ensure_net
+	if nc -z "$GOGGLE_IP" "$GOGGLE_PORT" 2>/dev/null; then
+		log "goggle reachable — starting pipeline"
+		if [ "$DECODE" = "sw" ]; then sw_pipeline; else hw_pipeline; fi
+		log "pipeline exited — reconnecting"
+	fi
+	sleep 1
+done

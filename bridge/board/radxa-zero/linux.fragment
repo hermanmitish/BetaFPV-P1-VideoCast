@@ -1,0 +1,20 @@
+# Extra kernel options merged on top of the arm64 defconfig.
+# (arm64 'defconfig' already enables most meson drivers; these make the three things we rely on
+#  explicit so a config refresh can't silently drop them.)
+
+# --- USB CDC-ECM as HOST (the goggle is the device; we enumerate its ECM gadget) ---
+CONFIG_USB_NET_DRIVERS=y
+CONFIG_USB_USBNET=y
+CONFIG_USB_NET_CDCETHER=y
+
+# --- Display: Amlogic DRM/KMS -> HDMI ---
+CONFIG_DRM=y
+CONFIG_DRM_MESON=y
+CONFIG_DRM_MESON_DW_HDMI=y
+
+# --- Video decode: V4L2 mem2mem + Amlogic stateless decoder (H.264 / HEVC / VP9) ---
+CONFIG_MEDIA_SUPPORT=y
+CONFIG_V4L_MEM2MEM_DRIVERS=y
+CONFIG_VIDEO_MESON_VDEC=y
+# NOTE(hevc): HEVC support on meson-vdec varies by SoC/kernel. If 'hw' decode fails on the S905Y2,
+# fall back to DECODE=sw in /etc/artlynk/bridge.conf and/or a CoreELEC-style Amlogic kernel.
