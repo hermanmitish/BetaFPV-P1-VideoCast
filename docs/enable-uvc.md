@@ -10,6 +10,32 @@
 > ECM+RTSP path instead: [ecm-rtsp-videoout.md](ecm-rtsp-videoout.md).** The rest below documents
 > what we found while confirming the dead end.
 
+> **Precise mechanism (re-confirmed 2026-06, dmesg captured over the telnet workflow).** It is NOT
+> an endpoint/FIFO allocation failure: binding the uvc gadget to the UDC *succeeds* cleanly —
+> `configfs-gadget gadget: uvc_function_bind` / `BULK transfer` / `dwc2 8000000.usb: bound driver
+> configfs-gadget`, no error. But the controller then **never leaves `not attached`**: held bound
+> for 20 s, `/sys/class/udc/8000000.usb/state` stayed `not attached` the whole time, there were
+> **zero USB reset/enumeration events** in dmesg, and the **host (macOS) saw no USB device and no
+> camera**. Rebinding the ECM gadget attaches instantly. So the gadget *binds* but the bus
+> connection/enumeration never starts with UVC descriptors present (it even falls back to BULK,
+> maxpacket 1024). The failure is at the attach/enumerate layer — UVC-specific and reproducible —
+> consistent with the webcam feature being wired only for the `cdns3` USB-3 controller.
+>
+> Re-runnable over USB (no UART): a detached script unbinds ECM, builds a `uvc` gadget as g2, binds
+> + holds it while the Mac polls `system_profiler SPUSBDataType`, then rebinds ECM (see git history
+> of this session for `/tmp/uvc_test2.sh`).
+>
+> **Exhausted the userspace levers (2026-06), incl. the OTG angle.** Matches a known `dwc2`
+> device-mode "not attached" bug class (RPi kernel issues #5942/#2684/#5532, PR #3151 — VBUS/session +
+> connect/disconnect state machine). The UDC is in **OTG/dual-role mode** (`/sys/class/udc/8000000.usb/
+> is_otg = 1`), so the pull-up/connect is gated by the OTG state machine. We tried everything reachable
+> from userspace, all → `not attached`, no reset/enumeration, host sees nothing: **(a)** clean boot at
+> uptime 2 s (fresh VBUS) — not just mid-session; **(b)** forcing the pull-up via
+> `echo disconnect/connect > /sys/class/udc/8000000.usb/soft_connect` — no change. Meanwhile the ECM
+> gadget attaches (`state = configured`) in the *same* OTG mode. So the block is in the kernel `dwc2`
+> OTG/connect path (or `f_uvc`), below userspace — and the firmware is RSA-signed, so we can't patch
+> the kernel/devicetree (e.g. `dr_mode`). Definitive dead end; use a Pi bridge for a webcam/HDMI.
+
 The non-Pro GND firmware fully contains the UVC webcam feature; BetaFPV only **hides the menu
 item** and ships the USB gadget without the `uvc` function. (The hiding is enable-able, but the
 gadget won't enumerate — see verdict above.)
