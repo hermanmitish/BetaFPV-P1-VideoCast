@@ -24,6 +24,10 @@ LD_PRELOAD). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md) and
 - `device/run_dbg.sh` — ECM+RTSP boot hook (ECM gadget + RTSP enable).
 - `device/run_dbg-acmtap.sh` + `device/videotap.c` — low-latency tap: ecm+3×acm gadget + an
   LD_PRELOAD shim that tees raw received H.265 to USB-ACM.
+- `device/run_dbg-venc8.sh` + `device/venc8tap.c` — **best video-out**: RTSP boot + LD_PRELOAD shim
+  that interposes `AR_MPI_VENC_GetStream`, tees the existing chn8 H.265 (composited + OSD) out
+  `tcp://10.55.0.1:9000`, forcing a keyframe (`AR_MPI_VENC_RequestIDR(8,1)`) on each client connect.
+  Low latency, zero extra memory. Deploy `tools/deploy-venc8.sh`, view `tools/view-venc8.sh`.
 - `tools/goggle.py` — UART console helper (`upload` text / `bupload` binary / `run`/`reboot`/`shell`).
 - `tools/goggle-net.py` — fast deploy/run over the USB-ECM link (no UART): `run`/`shell` via BusyBox
   `telnetd` (10.55.0.1:23, `-l /bin/sh`, started by `run_dbg.sh`), `push` via the goggle `wget`-ing
@@ -72,6 +76,16 @@ Use `ubireader_extract_images` to get the `.ubifs`, then a patched reader. v2.0.
   (mini-RTSP session leak) until reboot.
 - The goggle USB gadget IDs as product "Sirius" / mfr "Artosyn" / serial ZBBM5DZFMP; its ACM
   shows on the Mac as `/dev/cu.usbmodem*` (the enumeration tell).
+- **Can't make a 2nd encoder during live video:** `/proc/media-mem` (MMZ) is ~98MB used / ~10MB free
+  (fragmented) with 1080p video up, so `ar_lowdelay_module_venc_init` for our own MJPEG/H26x channel
+  fails `EN_ERR_NOMEM` (0x8008800C). MJPEG *is* supported (gets to the alloc step); it just won't fit,
+  and nothing's trimmable. → tap the existing chn8 encoder instead (venc8tap). The app encodes on
+  **chn8** (RTSP); record=chn4, replay=chn16. `ar_lowdelay_module_venc_init` only dlsym-resolves once
+  the encode path is live (drone bound).
+- **venc8 tap:** chn8 H.265 is ~60fps with an effectively infinite GOP (params+IDR once at start,
+  then only P-frames) — a mid-stream viewer must force a keyframe (`AR_MPI_VENC_RequestIDR(8,1)`) and
+  be fed cached VPS/SPS/PPS, else it can't decode. ffplay viewer: NO `-fflags nobuffer`/`-framedrop`
+  (drops the IDR); use `-flags low_delay -f hevc`. ffplay's fd=/clock readouts are bogus for raw HEVC.
 - **Low-latency tap:** the received H.265 is two low-delay streams decoded on VDEC chn0 (1920×560)
   + chn1 (1920×552), 32px overlap. The shim interposes `AR_MPI_VDEC_SendStream(chn, pstStream, ms)`
   (interposable across libs); `VDEC_STREAM_S` = `+0x00 u32 len`, `+0x1c u8* data` (virtual, H.265

@@ -4,14 +4,20 @@ Tools and notes for getting the **BetaFPV P1 HD (ArLink VR01 / Artosyn AR9301) n
 goggles** to stream their live FPV video to a computer **over the existing USB-C port** —
 no Wi-Fi module, no capture card, no permanent hardware mods.
 
-Two paths, both full 1080p over USB:
-- **ECM + RTSP** (simple) — swap the USB gadget for a **CDC-ECM** network interface (macOS speaks
-  it natively, unlike stock RNDIS) and enable the firmware's **RTSP** server:
+Three paths, all full 1080p over USB:
+- **venc8 H.265 TCP tap** ⭐ *(best — low latency, composited video **+ OSD**)* — an `LD_PRELOAD` shim
+  tees the goggle's *existing* chn8 H.265 encoder (the same composited+OSD stream RTSP serves) out
+  the ECM link over **TCP:9000**, forcing a keyframe on connect. No re-encode, no extra memory, much
+  lower latency than RTSP. View: `tools/view-venc8.sh` (`ffplay -f hevc tcp://10.55.0.1:9000`). See
+  [docs/lowlatency-venc8-tap.md](docs/lowlatency-venc8-tap.md).
+- **ECM + RTSP** (simplest, standard) — swap the USB gadget for a **CDC-ECM** network interface
+  (macOS speaks it natively, unlike stock RNDIS) and enable the firmware's **RTSP** server:
   `rtsp://10.55.0.1:554/venc8/stream`, viewable in VLC/ffplay or OBS → Virtual Camera. ~3 s
-  latency (serves the venc8 re-encode). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
-- **Raw H.265 tap** (low latency) — an `LD_PRELOAD` shim tees the *received* H.265 (two low-delay
-  strips) straight to USB-ACM, no re-encode; the host decodes both and stacks them to 1080p. Much
-  lower latency. See [docs/lowlatency-tap.md](docs/lowlatency-tap.md).
+  latency (serves the same venc8 stream, but with RTSP buffering). See
+  [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
+- **Raw H.265 tap** (low latency, no OSD) — an `LD_PRELOAD` shim tees the *received* H.265 (two
+  low-delay strips) straight to USB-ACM, no re-encode; the host decodes both and stacks them to
+  1080p. Pre-composite, so no OSD. See [docs/lowlatency-tap.md](docs/lowlatency-tap.md).
 
 > The obvious "make it a UVC webcam" route is a hardware dead end on this model — its USB-2
 > controller won't enumerate a UVC gadget. See [docs/enable-uvc.md](docs/enable-uvc.md).
@@ -38,6 +44,8 @@ drone → `tools/view.sh`.
 | `device/run_dbg-acmtap.sh` | boot hook for the low-latency tap (ecm + 3×acm gadget) |
 | `device/videotap.c` | `LD_PRELOAD` shim that tees raw H.265 to USB-ACM |
 | `tools/deploy-goggle.sh` / `tools/deploy-tap.sh` | one-command deploys (RTSP / tap) over UART |
+| `device/run_dbg-venc8.sh` + `device/venc8tap.c` | venc8 tap: RTSP boot + shim teeing chn8 H.265 to TCP:9000 |
+| `tools/deploy-venc8.sh` / `tools/view-venc8.sh` | deploy (net/UART) / view the low-latency venc8 tap |
 | `tools/goggle.py` | UART console helper (`upload`/`bupload`/`run`/`reboot`/`shell`) at 1228800 |
 | `tools/goggle-net.py` | network helper over USB-ECM (`run`/`push`/`shell` via telnet + wget) |
 | `tools/view.sh` | low-latency `ffplay` of the RTSP stream |
