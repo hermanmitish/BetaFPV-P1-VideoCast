@@ -25,6 +25,9 @@ LD_PRELOAD). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md) and
 - `device/run_dbg-acmtap.sh` + `device/videotap.c` — low-latency tap: ecm+3×acm gadget + an
   LD_PRELOAD shim that tees raw received H.265 to USB-ACM.
 - `tools/goggle.py` — UART console helper (`upload` text / `bupload` binary / `run`/`reboot`/`shell`).
+- `tools/goggle-net.py` — fast deploy/run over the USB-ECM link (no UART): `run`/`shell` via BusyBox
+  `telnetd` (10.55.0.1:23, `-l /bin/sh`, started by `run_dbg.sh`), `push` via the goggle `wget`-ing
+  from a temp HTTP server on the Mac's 10.55.0.2. UART only needed for first deploy / recovery.
 - `tools/deploy-goggle.sh` / `tools/deploy-tap.sh` — one-command deploys (RTSP / tap) over UART.
 - `tools/view.sh` (RTSP) / `tools/view-tap.sh`+`view-tap.py`+`serial_to_pipe.py` (tap).
 - `docs/` — RTSP solution, low-latency tap, UVC dead-end, Pro-vs-non-Pro firmware diff.

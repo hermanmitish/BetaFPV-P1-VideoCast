@@ -20,6 +20,12 @@ Two paths, both full 1080p over USB:
 Both need a 3.3V USB-TTL adapter on the goggle `DEBUG` header (`GND/TX0/RX0`, crossed, **1228800
 baud**, solid ground) — see [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md).
 
+> **Fast iteration over USB (no UART):** the ECM+RTSP boot config also starts a BusyBox `telnetd`
+> on the goggle, so once it's running you can deploy/run over the same USB link instead of the slow
+> byte-paced UART: `tools/goggle-net.py run "<cmd>"` (telnet) and `tools/goggle-net.py push <local>
+> <remote>` (the goggle `wget`s from a tiny HTTP server on the Mac's `10.55.0.2`). The UART is only
+> needed for the very first deploy / recovery.
+
 **ECM + RTSP:** `tools/deploy-goggle.sh` → set the Mac's new ECM adapter to `10.55.0.2/24` → bind a
 drone → `tools/view.sh`.
 
@@ -33,6 +39,7 @@ drone → `tools/view.sh`.
 | `device/videotap.c` | `LD_PRELOAD` shim that tees raw H.265 to USB-ACM |
 | `tools/deploy-goggle.sh` / `tools/deploy-tap.sh` | one-command deploys (RTSP / tap) over UART |
 | `tools/goggle.py` | UART console helper (`upload`/`bupload`/`run`/`reboot`/`shell`) at 1228800 |
+| `tools/goggle-net.py` | network helper over USB-ECM (`run`/`push`/`shell` via telnet + wget) |
 | `tools/view.sh` | low-latency `ffplay` of the RTSP stream |
 | `tools/view-tap.sh` / `view-tap.py` / `serial_to_pipe.py` | stack the two raw strips into a 1080p view |
 | `tools/p1-ota-extract.py` | unpack the OTA firmware partitions |

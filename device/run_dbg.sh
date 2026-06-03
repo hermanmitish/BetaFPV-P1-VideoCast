@@ -66,6 +66,11 @@ echo 8000000.usb > $G/UDC
 sleep 1
 ifconfig usb0 $GOGGLE_IP netmask 255.255.255.0 up
 
+# ---- remote shell over the same USB link (telnet @ 10.55.0.1:23, root /bin/sh) ----
+# Lets us deploy/run without the UART: `tools/goggle-net.py run/push`. Safe on this
+# point-to-point USB net; BusyBox telnetd, login shell directly (no password).
+telnetd -l /bin/sh -p 23 &
+
 # ---- rest of the stock GND boot ----
 echo "/tmp/sdcard/core-%e-%p-%s" > /proc/sys/kernel/core_pattern
 ulimit -c unlimited
