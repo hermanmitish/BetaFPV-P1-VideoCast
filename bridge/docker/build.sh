@@ -48,7 +48,8 @@ BR='make BR2_EXTERNAL=/src/bridge O=/work/output BR2_DL_DIR=/work/dl'
 
 case "${1:-build}" in
   build)
-    run "[ -f /work/output/.config ] || $BR artlynk_bridge_defconfig
+    # always (re)apply the defconfig so edits to configs/artlynk_bridge_defconfig take effect
+    run "$BR artlynk_bridge_defconfig
          $BR
          if cp -f /work/output/images/sdcard.img /out/ 2>/dev/null; then
              echo '[*] copied -> bridge/docker/images/sdcard.img'

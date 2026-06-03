@@ -7,14 +7,15 @@
 BR2_aarch64=y
 BR2_cortex_a53=y
 
-# --- Toolchain (Buildroot-built glibc; C++ for GStreamer) -------------------
-# Kernel headers MUST match the kernel we build (6.6) — otherwise Buildroot defaults them to 2.6,
-# which both fails the strict headers check AND disables glibc (glibc needs recent headers), silently
-# falling back to uClibc. "AS_KERNEL" derives the toolchain headers from BR2_LINUX_KERNEL below.
-BR2_KERNEL_HEADERS_AS_KERNEL=y
-BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
-BR2_TOOLCHAIN_BUILDROOT_CXX=y
-BR2_GCC_VERSION_13_X=y
+# --- Toolchain: pre-built Bootlin (aarch64 glibc) ---------------------------
+# Why external instead of a Buildroot-built toolchain: it has glibc + recent kernel headers baked in
+# (no strict headers-match check, the thing that kept forcing uClibc/2.6), AND it skips compiling a
+# whole toolchain — by far the longest, most memory-hungry phase. Much faster + more robust.
+# (If this exact symbol differs on your Buildroot release, set it via `build.sh menuconfig`:
+#  Toolchain -> Toolchain type: External -> Bootlin toolchains -> aarch64 glibc.)
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_AARCH64_GLIBC_STABLE=y
 
 # --- System / init ----------------------------------------------------------
 BR2_TARGET_GENERIC_HOSTNAME="artlynk-bridge"
@@ -50,10 +51,17 @@ BR2_TARGET_UBOOT_CUSTOM_VERSION=y
 BR2_TARGET_UBOOT_CUSTOM_VERSION_VALUE="2024.04"
 BR2_TARGET_UBOOT_BOARD_DEFCONFIG="radxa-zero"
 BR2_TARGET_UBOOT_NEEDS_DTC=y
+# host mkimage — post-image.sh uses it to compile boot.cmd -> boot.scr
+BR2_PACKAGE_HOST_UBOOT_TOOLS=y
 
 # --- Filesystem: ext4 rootfs + a FAT boot partition (genimage builds sdcard.img) -
-BR2_TARGET_ROOTFS_EXT4=y
-BR2_TARGET_ROOTFS_EXT4_4=y
+# NB: the symbol is ROOTFS_EXT2 (the ext2/3/4 builder) + the _4 revision for ext4 — there is no
+# BR2_TARGET_ROOTFS_EXT4. Output file is rootfs.ext2 (an ext4 image), which genimage.cfg references.
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+# default is ~60M — far too small for GStreamer + ffmpeg + the generic arm64 kernel's modules.
+# (Later we can shrink this a lot with a trimmed kernel config; 1G is roomy for now.)
+BR2_TARGET_ROOTFS_EXT2_SIZE="1G"
 BR2_PACKAGE_HOST_GENIMAGE=y
 BR2_PACKAGE_HOST_DOSFSTOOLS=y
 BR2_PACKAGE_HOST_MTOOLS=y

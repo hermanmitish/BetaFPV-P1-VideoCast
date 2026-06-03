@@ -6,7 +6,9 @@
 # $1 = path to genimage.cfg (from BR2_ROOTFS_POST_SCRIPT_ARGS).
 set -e
 BOARD_DIR="$(dirname "$0")"
-GENIMAGE_CFG="${1:-$BOARD_DIR/genimage.cfg}"
+# NB: for POST_IMAGE scripts Buildroot passes $1 = BINARIES_DIR (a directory), NOT our args — so use
+# the genimage.cfg sitting next to this script directly (passing $1 as --config was the flex error).
+GENIMAGE_CFG="$BOARD_DIR/genimage.cfg"
 MKIMAGE="${HOST_DIR}/bin/mkimage"
 
 # 1) boot.cmd -> boot.scr
@@ -26,7 +28,9 @@ if [ ! -f "${BINARIES_DIR}/u-boot.bin.sd.bin" ]; then
 	FIP="${BUILD_DIR}/amlogic-boot-fip"
 	[ -d "$FIP/.git" ] || git clone --depth 1 https://github.com/LibreELEC/amlogic-boot-fip "$FIP"
 	rm -rf "${BINARIES_DIR}/fip"
-	"$FIP/build-fip.sh" radxa-zero "${BINARIES_DIR}/u-boot.bin" "${BINARIES_DIR}/fip"
+	mkdir -p "${BINARIES_DIR}/fip"          # bootmk writes its output here — must exist
+	# build-fip.sh validates the board via `[ -d <board> ]` relative to its CWD, so run it from $FIP
+	( cd "$FIP" && ./build-fip.sh radxa-zero "${BINARIES_DIR}/u-boot.bin" "${BINARIES_DIR}/fip" )
 	cp "${BINARIES_DIR}/fip/u-boot.bin.sd.bin" "${BINARIES_DIR}/u-boot.bin.sd.bin"
 fi
 
@@ -34,11 +38,16 @@ fi
 echo "[post-image] running genimage"
 GENIMAGE_TMP="${BUILD_DIR}/genimage.tmp"
 rm -rf "${GENIMAGE_TMP}"
+# genimage's flex parser can fail reading the config straight off the macOS Docker bind mount
+# ("input in flex scanner failed") — copy it to the native build dir first.
+CFG_LOCAL="${BUILD_DIR}/genimage.cfg.local"
+rm -rf "${CFG_LOCAL}"                    # clear any stale copy (an earlier bug made it a directory)
+cp "${GENIMAGE_CFG}" "${CFG_LOCAL}"
 genimage \
 	--rootpath "${TARGET_DIR}" \
 	--tmppath "${GENIMAGE_TMP}" \
 	--inputpath "${BINARIES_DIR}" \
 	--outputpath "${BINARIES_DIR}" \
-	--config "${GENIMAGE_CFG}"
+	--config "${CFG_LOCAL}"
 
 echo "[post-image] wrote ${BINARIES_DIR}/sdcard.img"
