@@ -1,0 +1,5 @@
+# ArtLynkStream viewer app — Python deps (install into app/.venv)
+#   python3 -m venv app/.venv && app/.venv/bin/pip install -r app/requirements.txt
+PySide6      # GUI
+av           # PyAV — in-process FFmpeg decode (same libs as ffplay), low latency
+numpy        # frame -> QImage conversion (av .to_ndarray)

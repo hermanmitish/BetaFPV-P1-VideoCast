@@ -14,7 +14,7 @@ disabled so frames are shown the instant they decode — matching ffplay's laten
 much on this raw stream.)  Requires:  pip install PySide6 av
 Run:  app/.venv/bin/python app/artlynkstream.py
 """
-import os, sys, time, socket, datetime, subprocess
+import os, sys, time, socket, datetime, subprocess, shutil, threading
 import av
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QImage, QColor, QPainter, QFont
@@ -46,23 +46,11 @@ class DecodeThread(QThread):
         super().__init__()
         self.running = True
         self.rec_path = None          # set by UI to start recording, None to stop
+        self.force_reconnect = False  # set by UI on record start -> reconnect to land on a fresh IDR
         self._rec_file = None
 
     def stop(self):
         self.running = False
-
-    def _service_record(self, packet):
-        want = self.rec_path
-        if want and self._rec_file is None:
-            try: self._rec_file = open(want, "wb")
-            except Exception: self._rec_file = None
-        elif not want and self._rec_file is not None:
-            try: self._rec_file.close()
-            except Exception: pass
-            self._rec_file = None
-        if self._rec_file is not None:
-            try: self._rec_file.write(bytes(packet))
-            except Exception: pass
 
     def run(self):
         while self.running:
@@ -75,14 +63,33 @@ class DecodeThread(QThread):
                                     timeout=READ_TIMEOUT)
             except Exception:
                 self.state_changed.emit(STATE_NOGOGGLE); time.sleep(0.5); continue
+            self.force_reconnect = False
             got = False
             try:
                 vs = container.streams.video[0]
                 vs.thread_type = "NONE"                 # frames out immediately -> low latency
+                extradata = bytes(vs.codec_context.extradata or b"")   # VPS/SPS/PPS for the file header
                 self.state_changed.emit(STATE_WAITING)
+                # Open (or continue) the recording at this clean connection start. Because a record
+                # start forces a reconnect, the very first packets here are params + a fresh IDR, so
+                # the file always begins at a decodable keyframe. We also write the params explicitly.
+                if self.rec_path:
+                    if self._rec_file is None:
+                        try: self._rec_file = open(self.rec_path, "wb")
+                        except Exception: self._rec_file = None
+                    if self._rec_file is not None and extradata:
+                        self._rec_file.write(extradata)
                 for packet in container.demux(vs):
-                    if not self.running: break
-                    self._service_record(packet)
+                    if not self.running or self.force_reconnect:
+                        break
+                    if self._rec_file is not None:
+                        if self.rec_path:
+                            try: self._rec_file.write(bytes(packet))
+                            except Exception: pass
+                        else:                            # stop requested
+                            try: self._rec_file.close()
+                            except Exception: pass
+                            self._rec_file = None
                     for frame in packet.decode():
                         img = self._to_qimage(frame)
                         if img is not None:
@@ -90,7 +97,8 @@ class DecodeThread(QThread):
                                 got = True; self.state_changed.emit(STATE_STREAMING)
                             self.frame_ready.emit(img)
             except Exception as ex:
-                sys.stderr.write(f"[decode] {type(ex).__name__}: {ex}\n"); sys.stderr.flush()
+                if "Immediate exit" not in str(ex):    # read timeout (no drone) is expected/quiet
+                    sys.stderr.write(f"[decode] {type(ex).__name__}: {ex}\n"); sys.stderr.flush()
             finally:
                 try: container.close()
                 except Exception: pass
@@ -149,9 +157,18 @@ class VideoView(QWidget):
                            Qt.AlignHCenter | Qt.AlignTop, self._sub)
 
 
+def find_ffmpeg():
+    return (shutil.which("ffmpeg")
+            or next((p for p in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg")
+                     if os.path.exists(p)), None))
+
+
 class ArtLynkStream(QMainWindow):
+    status_msg = Signal(str)          # thread-safe status updates (e.g. from the remux thread)
+
     def __init__(self):
         super().__init__()
+        self.ffmpeg = find_ffmpeg()
         self.setWindowTitle("ArtLynkStream")
         self.resize(1280, 760)
         central = QWidget(); self.setCentralWidget(central)
@@ -178,6 +195,7 @@ class ArtLynkStream(QMainWindow):
         self.rec_path = None
         self.rec_started = 0.0
 
+        self.status_msg.connect(self.status.setText)
         self.dec = DecodeThread()
         self.dec.frame_ready.connect(self.view.set_frame)
         self.dec.state_changed.connect(self.on_state)
@@ -206,7 +224,7 @@ class ArtLynkStream(QMainWindow):
             self.status.setText("Streaming 1920×1080  ·  low latency")
             self.rec.setEnabled(True)
 
-    # ---- recording: tee raw H.265 packets, remux to .mp4 on stop --------------
+    # ---- recording: tee raw H.265 packets (from a fresh IDR), remux to .mp4 on stop ----
     def toggle_record(self):
         if self.rec.isChecked():
             os.makedirs(RECDIR, exist_ok=True)
@@ -214,23 +232,41 @@ class ArtLynkStream(QMainWindow):
             self.rec_path = os.path.join(RECDIR, f"ArtLynkStream-{ts}.h265")
             self.rec_started = time.time()
             self.dec.rec_path = self.rec_path
+            self.dec.force_reconnect = True          # reconnect so recording starts at a fresh IDR
         else:
             self.dec.rec_path = None
-            time.sleep(0.05)
             self._finalize_recording()
 
     def _finalize_recording(self):
         src = self.rec_path; self.rec_path = None
-        if not src or not os.path.exists(src):
+        if not src:
             return
         mp4 = src[:-5] + ".mp4"
-        try:
-            subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-fflags", "+genpts",
-                              "-r", "60", "-f", "hevc", "-i", src, "-c", "copy", mp4],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.status.setText(f"Saved {os.path.basename(mp4)}")
-        except Exception:
-            self.status.setText(f"Saved {os.path.basename(src)} (raw H.265)")
+        ff = self.ffmpeg
+
+        def work():
+            for _ in range(40):                      # wait for the decode thread to flush+close the file
+                if os.path.exists(src) and os.path.getsize(src) > 0:
+                    break
+                time.sleep(0.05)
+            if not ff:
+                self.status_msg.emit(f"Saved {os.path.basename(src)} (ffmpeg not found for .mp4)")
+                return
+            try:
+                r = subprocess.run([ff, "-y", "-loglevel", "error", "-fflags", "+genpts",
+                                    "-r", "60", "-f", "hevc", "-i", src,
+                                    "-c", "copy", "-tag:v", "hvc1", mp4],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                if r.returncode == 0 and os.path.exists(mp4) and os.path.getsize(mp4) > 0:
+                    try: os.remove(src)
+                    except Exception: pass
+                    self.status_msg.emit(f"Saved {os.path.basename(mp4)}")
+                else:
+                    self.status_msg.emit(f"Saved {os.path.basename(src)} (raw H.265; .mp4 remux failed)")
+            except Exception as ex:
+                self.status_msg.emit(f"Saved {os.path.basename(src)} (raw; {ex})")
+
+        threading.Thread(target=work, daemon=True).start()
 
     def update_rec_label(self):
         if self.rec.isChecked():
