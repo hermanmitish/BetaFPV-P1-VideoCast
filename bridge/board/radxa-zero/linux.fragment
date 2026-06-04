@@ -28,3 +28,10 @@ CONFIG_USB_CONFIGFS_ECM=y
 # Amlogic G12A USB controller (dwc3) provides the peripheral-mode UDC the gadget binds to.
 CONFIG_USB_DWC3=y
 CONFIG_USB_DWC3_MESON_G12A=y
+
+# --- USB gadget (UVC): present a webcam to the host (your Mac) over the same OTG port ---
+# Composite ECM+UVC on one gadget keeps SSH while streaming the decoded FPV feed as a webcam.
+# A userspace daemon (uvc-gadget) negotiates UVC and queues MJPEG frames into the f_uvc V4L2 node.
+# F_UVC auto-selects USB_F_UVC + VIDEOBUF2_*; VIDEO_DEV is already on via the meson-vdec decoder.
+CONFIG_USB_CONFIGFS_F_UVC=y
+CONFIG_USB_F_UVC=y

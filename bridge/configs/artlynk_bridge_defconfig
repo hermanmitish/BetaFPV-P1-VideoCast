@@ -74,6 +74,7 @@ BR2_PACKAGE_GST1_PLUGINS_GOOD=y
 BR2_PACKAGE_GST1_PLUGINS_GOOD_V4L2=y                # V4L2 (stateless HEVC decoder lives here)
 BR2_PACKAGE_GST1_PLUGINS_BAD=y
 BR2_PACKAGE_GST1_PLUGINS_BAD_PLUGIN_KMS=y           # kmssink -> direct to HDMI framebuffer
+BR2_PACKAGE_GST1_PLUGINS_BAD_PLUGIN_UVCGADGET=y     # uvcsink -> present as a USB webcam (needs gst>=1.24)
 BR2_PACKAGE_GST1_LIBAV=y                            # avdec_h265 (software fallback, M2)
 
 # --- Userspace tools --------------------------------------------------------

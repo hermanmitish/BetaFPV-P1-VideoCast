@@ -18,7 +18,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BRIDGE="$(cd "$HERE/.." && pwd)"
 IMG=artlynk-bridge-builder
 VOL="${ARTLYNK_VOL:-artlynk-br}"               # named volume: buildroot + output + dl
-BR_VERSION="${BR_VERSION:-2025.02}"            # Buildroot release/branch
+BR_VERSION="${BR_VERSION:-2026.02}"            # Buildroot release/branch (LTS; gst 1.24 -> uvcsink)
 OUT="$HERE/images"                             # finished sdcard.img lands here on the host
 mkdir -p "$OUT"
 
@@ -35,9 +35,12 @@ run() {
     "$IMG" bash -lc "
       set -e
       cd /work
-      if [ ! -d buildroot/.git ]; then
-        echo '[*] cloning Buildroot $BR_VERSION (one-time, inside the volume)...'
+      # (re)clone when the requested Buildroot version changes (keeps the /work/dl download cache).
+      if [ ! -d buildroot/.git ] || [ \"\$(cat .br_version 2>/dev/null)\" != '$BR_VERSION' ]; then
+        echo '[*] (re)cloning Buildroot $BR_VERSION (first run or version change)...'
+        rm -rf buildroot output
         git clone --depth 1 --branch '$BR_VERSION' https://gitlab.com/buildroot.org/buildroot.git buildroot
+        echo '$BR_VERSION' > .br_version
       fi
       cd buildroot
       $1
@@ -52,7 +55,10 @@ case "${1:-build}" in
     run "$BR artlynk_bridge_defconfig
          $BR
          if cp -f /work/output/images/sdcard.img /out/ 2>/dev/null; then
-             echo '[*] copied -> bridge/docker/images/sdcard.img'
+             # also expose the individual boot artifacts for over-SSH deploys (deploy-ssh.sh)
+             cp -f /work/output/images/Image /work/output/images/boot.scr \
+                   /work/output/images/meson-g12a-radxa-zero.dtb /out/ 2>/dev/null || true
+             echo '[*] copied -> bridge/docker/images/ (sdcard.img + Image + dtb + boot.scr)'
          else echo '[!] build finished but no sdcard.img (check the log above)'; fi"
     ;;
   defconfig)     run "$BR artlynk_bridge_defconfig" ;;
