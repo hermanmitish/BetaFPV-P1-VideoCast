@@ -43,6 +43,18 @@ run() {
         echo '$BR_VERSION' > .br_version
       fi
       cd buildroot
+      # Enable gst-plugins-bad's 'uvcgadget' plugin (gives uvcsink): Buildroot has no Kconfig symbol for
+      # it and force-disables the meson flag + doesn't know it needs libgudev. Flip the flag and add the
+      # build-order dependency. Idempotent (re-applied each build; a re-clone reverts the tree).
+      BADMK=package/gstreamer1/gst1-plugins-bad/gst1-plugins-bad.mk
+      sed -i 's/-Duvcgadget=disabled/-Duvcgadget=enabled/' \"\$BADMK\"
+      grep -q '^GST1_PLUGINS_BAD_DEPENDENCIES = .*libgudev' \"\$BADMK\" || sed -i '/^GST1_PLUGINS_BAD_DEPENDENCIES = / s/\$/ libgudev/' \"\$BADMK\"
+      # Buildroot rebuilds on stamp files, not .mk content — so flipping the uvcgadget flag on an already
+      # built tree is silently ignored. If the plugin .so isn't in the target yet, force gst-bad to rebuild.
+      if [ -f /work/output/.config ] && [ ! -e /work/output/target/usr/lib/gstreamer-1.0/libgstuvcgadget.so ]; then
+        echo '[*] uvcsink plugin missing -> forcing gst1-plugins-bad rebuild'
+        make BR2_EXTERNAL=/src/bridge O=/work/output BR2_DL_DIR=/work/dl gst1-plugins-bad-dirclean || true
+      fi
       $1
     "
 }

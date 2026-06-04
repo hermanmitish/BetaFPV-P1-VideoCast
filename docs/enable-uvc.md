@@ -1,14 +1,26 @@
-# UVC (USB webcam) on the non-Pro P1 HD goggles — DEAD END (kept for the record)
+# UVC (USB webcam) on the non-Pro P1 HD goggles — SOLVABLE (the dwc2 pullup fix)
 
-> **VERDICT: not achievable on this hardware.** We unhid the menu, set the flags, and created
-> the `uvc` gadget function (`/dev/video0` appears), but the goggle's **USB-2 `dwc2` controller
-> will not enumerate ANY UVC-containing gadget** — the UDC stays `not attached` and the host
-> sees no device. Tested 5 ways (full composite, `uart+uvc`, `uvc` alone, minimal `uvc_hdr`
-> MJPEG-only, bulk-valid `maxpacket=512`); all fail, while every non-UVC gadget enumerates fine.
-> The gadget script's special `cdns3` (USB-3) UVC path implies the vendor's webcam feature is
-> for their USB-3 variants — almost certainly why it's hidden on the non-Pro. **Use the working
-> ECM+RTSP path instead: [ecm-rtsp-videoout.md](ecm-rtsp-videoout.md).** The rest below documents
-> what we found while confirming the dead end.
+> **UPDATE 2026-06: the "dead end" verdict was WRONG — there's one lever we never pulled.**
+> The identical symptom (the `uvc` gadget binds, `/sys/class/udc/8000000.usb/state` stays
+> `not attached`, the host sees no device) was hit AND THEN SOLVED on a Radxa Zero's dwc2. Root cause:
+> **the dwc2 controller parks its USB pull-up OFF the moment a UVC function is bound** — device
+> register `DCTL` (dwc2 base + 0x804) bit1 `SftDiscon` is left = 1, so the host never sees a connect.
+> ECM/RNDIS-only gadgets connect fine. **The fix is a DIRECT register write after binding:**
+> ```sh
+> devmem <dwc2_base + 0x804> 32 0x00000000   # clear SftDiscon -> pull-up ON
+> ```
+> On the goggle the dwc2 base is `0x8000000` (UDC `8000000.usb`) → **`DCTL = 0x8000804`**. Script:
+> **[device/uvc-up.sh](../device/uvc-up.sh)** builds a minimal MJPEG UVC gadget and applies this.
+>
+> **Why we missed it:** we had tried `echo connect > /sys/class/udc/8000000.usb/soft_connect`, but that
+> goes through the dwc2 driver's pull-up path — which is **gated by the OTG state machine** (`is_otg=1`),
+> so it silently did nothing (see the 2026-06 note below). The **direct `devmem` write bypasses the
+> driver/OTG gate** and forces the pull-up on. On the Radxa, `soft_connect` was likewise non-functional
+> but `devmem` to DCTL worked → composite ECM+UVC enumerated, "ArtLynk Bridge" appeared as a webcam.
+> Everything else in the analysis below still holds (not a FIFO/endpoint error, descriptors are fine,
+> isoc hardware is present) — it was purely the pull-up/connect being parked off for UVC. The signed
+> firmware is NOT a blocker for this: the fix is a userspace `devmem`, no kernel/devicetree patch needed.
+> (The ECM+RTSP path [ecm-rtsp-videoout.md](ecm-rtsp-videoout.md) still works as a fallback.)
 
 > **Precise mechanism (re-confirmed 2026-06, dmesg captured over the telnet workflow).** It is NOT
 > an endpoint/FIFO allocation failure: binding the uvc gadget to the UDC *succeeds* cleanly —
@@ -25,16 +37,21 @@
 > + holds it while the Mac polls `system_profiler SPUSBDataType`, then rebinds ECM (see git history
 > of this session for `/tmp/uvc_test2.sh`).
 >
-> **Exhausted the userspace levers (2026-06), incl. the OTG angle.** Matches a known `dwc2`
+> **⚠️ SUPERSEDED (see the fix at top): we did NOT exhaust the userspace levers — the missing one was a
+> direct `devmem` write to `DCTL` (0x8000804). The `soft_connect` attempt below goes through the driver's
+> OTG-gated pull-up path and silently no-ops; `devmem` bypasses it.** Original (now-corrected) note:
+> **Thought we'd exhausted the userspace levers (2026-06), incl. the OTG angle.** Matches a known `dwc2`
 > device-mode "not attached" bug class (RPi kernel issues #5942/#2684/#5532, PR #3151 — VBUS/session +
 > connect/disconnect state machine). The UDC is in **OTG/dual-role mode** (`/sys/class/udc/8000000.usb/
 > is_otg = 1`), so the pull-up/connect is gated by the OTG state machine. We tried everything reachable
 > from userspace, all → `not attached`, no reset/enumeration, host sees nothing: **(a)** clean boot at
 > uptime 2 s (fresh VBUS) — not just mid-session; **(b)** forcing the pull-up via
-> `echo disconnect/connect > /sys/class/udc/8000000.usb/soft_connect` — no change. Meanwhile the ECM
-> gadget attaches (`state = configured`) in the *same* OTG mode. So the block is in the kernel `dwc2`
-> OTG/connect path (or `f_uvc`), below userspace — and the firmware is RSA-signed, so we can't patch
-> the kernel/devicetree (e.g. `dr_mode`). Definitive dead end; use a Pi bridge for a webcam/HDMI.
+> `echo disconnect/connect > /sys/class/udc/8000000.usb/soft_connect` — no change (← THIS is the gated
+> path; the working fix is `devmem 0x8000804 32 0` instead). Meanwhile the ECM gadget attaches
+> (`state = configured`) in the *same* OTG mode. We concluded the block was in the kernel `dwc2`
+> OTG/connect path below userspace — but it's reachable from userspace after all via the raw DCTL
+> register. ~~Definitive dead end~~ → **solved by the direct pull-up write; no kernel/devicetree patch
+> needed, so the RSA-signed firmware is not a blocker.** ([device/uvc-up.sh](../device/uvc-up.sh))
 
 The non-Pro GND firmware fully contains the UVC webcam feature; BetaFPV only **hides the menu
 item** and ships the USB gadget without the `uvc` function. (The hiding is enable-able, but the

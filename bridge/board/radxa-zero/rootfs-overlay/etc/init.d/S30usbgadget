@@ -1,48 +1,114 @@
 #!/bin/sh
-# CDC-ECM USB gadget: present a USB network device to the host (your Mac) so you can SSH in over the
-# USB-C cable — no serial, no HDMI. Plug the Radxa's OTG/power USB-C port into the Mac.
-#   Mac side: set the new USB network interface to 10.66.0.2/24, then:  ssh root@10.66.0.1  (pw: artlynk)
-GADGET_IP=10.66.0.1
-GADGET_MASK=255.255.255.0
+# USB gadget on the OTG port (dwc2). Modes (by flag file), self-testing so SSH always recovers:
+#   default                    ECM only (SSH-over-USB) — the safe baseline
+#   /etc/artlynk/uvc-enable    composite ECM + UVC (webcam) in one gadget
+#   /etc/artlynk/uvc-only      UVC only (matches the Pi-Zero/g_webcam recipe; no ECM, so SSH via serial)
+# When UVC is on, after binding it checks the udc state; if the host didn't enumerate (state!=configured)
+# it logs why to /root/uvc-boot-result.log and falls back to ECM-only so SSH returns — no serial needed.
+GADGET_IP=10.66.0.1; GADGET_MASK=255.255.255.0
+UVC_W=1280; UVC_H=720; UVC_FPS=30; UVC_MAXPKT=1024
+G=/sys/kernel/config/usb_gadget/g1
+
+setup_uvc() {   # build uvc.0 (MJPEG, one frame) and link it into the config; non-zero if f_uvc absent
+	local U="$G/functions/uvc.0"
+	mkdir -p "$U" 2>/dev/null || return 1
+	mkdir -p "$U/control/header/h"
+	ln -sf "$U/control/header/h" "$U/control/class/fs/h"
+	ln -sf "$U/control/header/h" "$U/control/class/ss/h"
+	local F="$U/streaming/mjpeg/m/f"; mkdir -p "$F"
+	echo "$UVC_W" > "$F/wWidth"; echo "$UVC_H" > "$F/wHeight"
+	echo $(( UVC_W * UVC_H * 2 ))               > "$F/dwMaxVideoFrameBufferSize"
+	echo $(( 10000000 / UVC_FPS ))              > "$F/dwDefaultFrameInterval"
+	echo $(( UVC_W * UVC_H * 2 * UVC_FPS * 8 )) > "$F/dwMinBitRate"
+	echo $(( UVC_W * UVC_H * 2 * UVC_FPS * 8 )) > "$F/dwMaxBitRate"
+	printf '%s\n' $(( 10000000 / UVC_FPS ))     > "$F/dwFrameInterval"
+	mkdir -p "$U/streaming/header/h"
+	ln -sf "$U/streaming/mjpeg/m" "$U/streaming/header/h/m"
+	ln -sf "$U/streaming/header/h" "$U/streaming/class/fs/h"
+	ln -sf "$U/streaming/header/h" "$U/streaming/class/hs/h"
+	ln -sf "$U/streaming/header/h" "$U/streaming/class/ss/h"
+	echo "$UVC_MAXPKT" > "$U/streaming_maxpacket" 2>/dev/null || true
+	ln -sf "$U" "$G/configs/c.1/uvc.0"
+}
+iad_class()  { echo 0xEF > "$G/bDeviceClass"; echo 0x02 > "$G/bDeviceSubClass"; echo 0x01 > "$G/bDeviceProtocol"; }
+zero_class() { echo 0x00 > "$G/bDeviceClass" 2>/dev/null; echo 0x00 > "$G/bDeviceSubClass" 2>/dev/null; echo 0x00 > "$G/bDeviceProtocol" 2>/dev/null; }
+recover_ecm() {
+	pkill -f gst-launch 2>/dev/null; pkill -f uvc-stream 2>/dev/null
+	echo "" > "$G/UDC"; sleep 1
+	rm -f "$G/configs/c.1/uvc.0"
+	ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/" 2>/dev/null
+	zero_class; echo "ECM" > "$G/configs/c.1/strings/0x409/configuration"
+	sleep 1; echo "$UDC" > "$G/UDC"
+}
+assign_ecm_ip() {
+	local IF="" n i=0
+	while [ $i -lt 5 ]; do
+		for n in /sys/class/net/usb*; do [ -e "$n" ] && IF=$(basename "$n") && break; done
+		[ -n "$IF" ] && break; sleep 1; i=$((i+1))
+	done
+	[ -n "$IF" ] && ifconfig "$IF" "$GADGET_IP" netmask "$GADGET_MASK" up && echo "usbgadget: $IF = $GADGET_IP (ssh root@$GADGET_IP)"
+}
 
 case "$1" in
   start)
 	UDC=$(ls /sys/class/udc/ 2>/dev/null | head -n1)
-	if [ -z "$UDC" ]; then
-		echo "usbgadget: no UDC found (USB port not in peripheral/otg mode?) — skipping"
-		exit 0
-	fi
+	[ -z "$UDC" ] && { echo "usbgadget: no UDC — skipping"; exit 0; }
 	mount -t configfs none /sys/kernel/config 2>/dev/null
-	G=/sys/kernel/config/usb_gadget/g1
 	mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/ecm.usb0"
-	echo 0x1d6b > "$G/idVendor"
-	echo 0x0104 > "$G/idProduct"
-	echo 0x0200 > "$G/bcdUSB"
-	echo "ArtLynk"        > "$G/strings/0x409/manufacturer"
+	echo 0x1d6b > "$G/idVendor"; echo 0x0104 > "$G/idProduct"; echo 0x0200 > "$G/bcdUSB"
+	echo "ArtLynk" > "$G/strings/0x409/manufacturer"
 	echo "ArtLynk Bridge" > "$G/strings/0x409/product"
-	echo "artlynk0001"    > "$G/strings/0x409/serialnumber"
-	echo "ECM" > "$G/configs/c.1/strings/0x409/configuration"
-	echo 250   > "$G/configs/c.1/MaxPower"
+	echo "artlynk0001" > "$G/strings/0x409/serialnumber"
+	echo 500 > "$G/configs/c.1/MaxPower"
 	echo "02:00:00:66:00:01" > "$G/functions/ecm.usb0/dev_addr"
 	echo "02:00:00:66:00:02" > "$G/functions/ecm.usb0/host_addr"
-	ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/"
-	echo "$UDC" > "$G/UDC" && echo "usbgadget: bound ECM gadget to UDC $UDC"
-	# assign the device-side interface (the ECM gadget creates a usb* netdev)
-	IF=""
-	for i in 1 2 3 4 5; do
-		for n in /sys/class/net/usb*; do [ -e "$n" ] && IF=$(basename "$n") && break; done
-		[ -n "$IF" ] && break
-		sleep 1
-	done
-	if [ -n "$IF" ]; then
-		ifconfig "$IF" "$GADGET_IP" netmask "$GADGET_MASK" up
-		echo "usbgadget: $IF = $GADGET_IP   (ssh root@$GADGET_IP)"
-	else
-		echo "usbgadget: gadget bound but no usb* netdev appeared yet"
+
+	MODE=ecm
+	[ -f /etc/artlynk/uvc-enable ] && MODE=composite
+	[ -f /etc/artlynk/uvc-only ]   && MODE=uvconly
+	case "$MODE" in
+	  composite)
+		ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/"
+		setup_uvc && iad_class && echo "ECM+UVC" > "$G/configs/c.1/strings/0x409/configuration" || MODE=ecm ;;
+	  uvconly)
+		setup_uvc && iad_class && echo "UVC" > "$G/configs/c.1/strings/0x409/configuration" || MODE=ecm ;;
+	  *) : ;;
+	esac
+	if [ "$MODE" = ecm ]; then
+		ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/"
+		zero_class; echo "ECM" > "$G/configs/c.1/strings/0x409/configuration"
 	fi
+	echo "usbgadget: mode=$MODE -> binding $UDC"
+	echo "$UDC" > "$G/UDC"
+
+	if [ "$MODE" != ecm ]; then
+		# Launch the UVC userspace handler (uvcsink, test pattern) so the gadget can answer the host's
+		# probe/commit/streamon control requests during init. Some hosts won't recognize a UVC device
+		# whose events go unanswered. (The Pi recipe always runs uvc-gadget after binding.)
+		sleep 2
+		DCTL_PRE=$(devmem 0xff400804)
+		# *** THE UVC-on-dwc2 FIX ***  The dwc2 parks its pullup OFF (DCTL.SftDiscon=bit1=1) whenever a UVC
+		# function is bound, so the host never sees a connect and never enumerates ("not attached"). ECM-only
+		# connects fine. Asserting the pullup here makes the Mac enumerate the composite ECM+UVC webcam.
+		devmem 0xff400804 32 0x00000000   # clear SftDiscon -> pullup ON
+		( setsid uvc-stream test ) > /tmp/uvcsink.log 2>&1 &
+		sleep 14
+		ST=$(cat /sys/class/udc/$UDC/state 2>/dev/null)
+		{ echo "=== UVC boot test: mode=$MODE state=$ST maxpkt=$UVC_MAXPKT ==="
+		  echo "--- dwc2 regs: DCTL_pre=$DCTL_PRE  now DCFG=$(devmem 0xff400800) DCTL=$(devmem 0xff400804) DSTS=$(devmem 0xff400808) GINTSTS=$(devmem 0xff400014) ---"
+		  echo "    (DCFG DevAddr=bits10:4 -> nonzero = host addressed us; DCTL bit1=SftDiscon)"
+		  echo "--- uvcsink handler log ---"; tail -8 /tmp/uvcsink.log 2>/dev/null
+		  echo "--- dmesg ---"; dmesg | grep -iE "uvc|dwc2|gadget|fifo|new address|new device|reset|enumerat|configured|insufficient" | tail -25
+		} > /root/uvc-boot-result.log 2>&1
+		if [ "$ST" = "configured" ]; then
+			echo "usbgadget: *** UVC ENUMERATED (mode=$MODE) — webcam live ***"
+		else
+			echo "usbgadget: UVC did NOT enumerate (state=$ST) -> recover to ECM-only"
+			recover_ecm; MODE=ecm
+		fi
+	fi
+	assign_ecm_ip
 	;;
-  stop)
-	echo "" > /sys/kernel/config/usb_gadget/g1/UDC 2>/dev/null
-	;;
+  stop) echo "" > "$G/UDC" 2>/dev/null ;;
   *) echo "Usage: $0 {start|stop}"; exit 1;;
 esac

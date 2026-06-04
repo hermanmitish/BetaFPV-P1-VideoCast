@@ -10,13 +10,23 @@ set -e
 MODE="${1:-test}"
 W=1280; H=720; FPS=30
 
-# find the UVC gadget video node (its name mentions uvc/gadget; /dev/video0 is the HEVC decoder)
+# find the f_uvc gadget video node: the video node that is NOT the meson HW decoder. The gadget node is
+# named after the UDC (e.g. "ff400000.usb"). Short retry since it appears right after the gadget binds.
 DEV=""
-for v in /sys/class/video4linux/video*; do
-	n=$(cat "$v/name" 2>/dev/null || echo)
-	case "$n" in *uvc*|*UVC*|*gadget*) DEV="/dev/$(basename "$v")"; break;; esac
+i=0
+while [ $i -lt 10 ]; do
+	for v in /sys/class/video4linux/video*; do
+		[ -e "$v" ] || continue
+		n=$(cat "$v/name" 2>/dev/null)
+		case "$n" in
+			""|*meson*|*decoder*|*vdec*|*decode*) : ;;
+			*) DEV="/dev/$(basename "$v")"; break;;
+		esac
+	done
+	[ -n "$DEV" ] && break
+	i=$((i+1)); sleep 0.5
 done
-[ -n "$DEV" ] || { echo "uvc-stream: no UVC gadget node found — run uvc-gadget-up first"; exit 1; }
+[ -n "$DEV" ] || { echo "uvc-stream: no UVC gadget node found — is the gadget bound with uvc.0?"; exit 1; }
 echo "uvc-stream: UVC node = $DEV  (mode: $MODE)"
 
 CAPS="video/x-raw,width=$W,height=$H,framerate=$FPS/1"

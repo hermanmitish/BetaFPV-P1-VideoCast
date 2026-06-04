@@ -63,8 +63,11 @@ Use `ubireader_extract_images` to get the `.ubifs`, then a patched reader. v2.0.
 `run.sh`, `usb_gadget_configfs.sh`, `cfg_rx_sys.json` are identical → the solution is portable.
 
 ## Key facts / gotchas
-- **UVC webcam is impossible here** — the USB-2 `dwc2` controller won't enumerate any
-  UVC-containing gadget (proven). See [docs/enable-uvc.md](docs/enable-uvc.md).
+- **UVC webcam — SOLVED (2026-06)**, not impossible. The dwc2 parks its pull-up OFF when a UVC function
+  binds (`DCTL` bit1 `SftDiscon=1` → UDC stays `not attached`); fix = force it on with a direct register
+  write **after** binding: `devmem 0x8000804 32 0x00000000` (goggle dwc2 base `0x8000000`, DCTL=base+0x804).
+  Earlier `soft_connect` tries were OTG-gated no-ops; raw `devmem` bypasses that. Proven on the Radxa
+  Zero's dwc2, ported in [device/uvc-up.sh](device/uvc-up.sh). See [docs/enable-uvc.md](docs/enable-uvc.md).
 - **Enable only `RxEncRtspEnable`** (cfg_rx_sys.json), not also `RxRtspEnable` — both → two
   servers fight over port 554 → one spins `accept()` on a dead fd → console flood
   `Accept connection error: Bad file descriptor` (drowns the UART). Flood recovery: heavily

@@ -53,6 +53,15 @@ ln -sf "$U" "$G/configs/c.1/uvc.0" 2>/dev/null || true
 echo "uvc-gadget-up: rebinding to $UDC ..."
 echo "$UDC" > "$G/UDC"
 
+# a rebind recreates the ECM netdev WITHOUT its address — re-assign it or SSH never comes back
+IF=""
+for i in 1 2 3 4 5; do
+	for n in /sys/class/net/usb*; do [ -e "$n" ] && IF=$(basename "$n") && break; done
+	[ -n "$IF" ] && break
+	sleep 1
+done
+[ -n "$IF" ] && ifconfig "$IF" 10.66.0.1 netmask 255.255.255.0 up && echo "uvc-gadget-up: $IF = 10.66.0.1 (SSH restored)"
+
 # report the f_uvc video node (the one whose name mentions uvc, not the decoder)
 sleep 1
 for v in /sys/class/video4linux/video*; do
