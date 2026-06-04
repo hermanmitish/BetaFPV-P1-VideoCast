@@ -50,4 +50,13 @@ genimage \
 	--outputpath "${BINARIES_DIR}" \
 	--config "${CFG_LOCAL}"
 
+# Embed the Amlogic bootloader the way the boot ROM expects: rest-from-sector-1, then the first 444
+# bytes at sector 0 (leaving the MBR partition table at 446..509 intact). A single genimage
+# offset=512 partition only wrote the sector-1 half, so the ROM never found a valid bootloader.
+SD="${BINARIES_DIR}/sdcard.img"
+UBOOT_SD="${BINARIES_DIR}/u-boot.bin.sd.bin"
+dd if="${UBOOT_SD}" of="${SD}" conv=fsync,notrunc bs=512 skip=1 seek=1
+dd if="${UBOOT_SD}" of="${SD}" conv=fsync,notrunc bs=1 count=444
+echo "[post-image] embedded Amlogic bootloader into ${SD}"
+
 echo "[post-image] wrote ${BINARIES_DIR}/sdcard.img"
