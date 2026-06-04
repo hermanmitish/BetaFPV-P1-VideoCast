@@ -33,7 +33,7 @@ setup_uvc() {   # build uvc.0 (MJPEG, one frame) and link it into the config; no
 iad_class()  { echo 0xEF > "$G/bDeviceClass"; echo 0x02 > "$G/bDeviceSubClass"; echo 0x01 > "$G/bDeviceProtocol"; }
 zero_class() { echo 0x00 > "$G/bDeviceClass" 2>/dev/null; echo 0x00 > "$G/bDeviceSubClass" 2>/dev/null; echo 0x00 > "$G/bDeviceProtocol" 2>/dev/null; }
 recover_ecm() {
-	pkill -f gst-launch 2>/dev/null; pkill -f uvc-stream 2>/dev/null
+	killall uvc-gadget 2>/dev/null
 	echo "" > "$G/UDC"; sleep 1
 	rm -f "$G/configs/c.1/uvc.0"
 	ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/" 2>/dev/null
@@ -82,22 +82,32 @@ case "$1" in
 	echo "$UDC" > "$G/UDC"
 
 	if [ "$MODE" != ecm ]; then
-		# Launch the UVC userspace handler (uvcsink, test pattern) so the gadget can answer the host's
-		# probe/commit/streamon control requests during init. Some hosts won't recognize a UVC device
-		# whose events go unanswered. (The Pi recipe always runs uvc-gadget after binding.)
+		# After binding, force the dwc2 pull-up on (the fix below) and start uvc-gadget as the handler so the
+		# gadget answers the host's UVC control requests during init — some hosts won't register a UVC device
+		# whose probe/commit go unanswered. (The Pi/g_webcam recipe always runs uvc-gadget after binding.)
 		sleep 2
 		DCTL_PRE=$(devmem 0xff400804)
 		# *** THE UVC-on-dwc2 FIX ***  The dwc2 parks its pullup OFF (DCTL.SftDiscon=bit1=1) whenever a UVC
 		# function is bound, so the host never sees a connect and never enumerates ("not attached"). ECM-only
 		# connects fine. Asserting the pullup here makes the Mac enumerate the composite ECM+UVC webcam.
 		devmem 0xff400804 32 0x00000000   # clear SftDiscon -> pullup ON
-		( setsid uvc-stream test ) > /tmp/uvcsink.log 2>&1 &
+		# Start the SINGLE userspace UVC handler: uvc-gadget answers the host's probe/commit/streamon and
+		# pumps MJPEG frames (GStreamer's uvcsink wouldn't negotiate our hand-built gadget; wlhe uvc-gadget
+		# does). Feeds the test image now; Phase 2 swaps in the live goggle decode. ONE instance — extra
+		# feeders thrashing /dev/videoN make macOS's camera subsystem drop the device.
+		killall uvc-gadget 2>/dev/null
+		UVCNODE=""
+		for v in /sys/class/video4linux/video*; do
+			[ -e "$v" ] || continue
+			case "$(cat "$v/name" 2>/dev/null)" in ""|*meson*|*decoder*|*vdec*) : ;; *) UVCNODE="/dev/$(basename "$v")"; break ;; esac
+		done
+		[ -n "$UVCNODE" ] && uvc-gadget -u "$UVCNODE" -f 1 -r 1 -i /etc/artlynk/uvc-image.jpg > /var/log/uvc-gadget.log 2>&1 &
 		sleep 14
 		ST=$(cat /sys/class/udc/$UDC/state 2>/dev/null)
 		{ echo "=== UVC boot test: mode=$MODE state=$ST maxpkt=$UVC_MAXPKT ==="
 		  echo "--- dwc2 regs: DCTL_pre=$DCTL_PRE  now DCFG=$(devmem 0xff400800) DCTL=$(devmem 0xff400804) DSTS=$(devmem 0xff400808) GINTSTS=$(devmem 0xff400014) ---"
 		  echo "    (DCFG DevAddr=bits10:4 -> nonzero = host addressed us; DCTL bit1=SftDiscon)"
-		  echo "--- uvcsink handler log ---"; tail -8 /tmp/uvcsink.log 2>/dev/null
+		  echo "--- uvc-gadget handler log ---"; tail -8 /var/log/uvc-gadget.log 2>/dev/null
 		  echo "--- dmesg ---"; dmesg | grep -iE "uvc|dwc2|gadget|fifo|new address|new device|reset|enumerat|configured|insufficient" | tail -25
 		} > /root/uvc-boot-result.log 2>&1
 		if [ "$ST" = "configured" ]; then

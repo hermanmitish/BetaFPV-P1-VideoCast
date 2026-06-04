@@ -28,7 +28,8 @@ BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
 BR2_TARGET_GENERIC_GETTY_PORT="ttyAML0"          # Amlogic serial console
 # our overlay files (init scripts + config) get laid straight onto the rootfs:
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH)/board/radxa-zero/rootfs-overlay"
-# after the rootfs is built, assemble the SD image:
+# after the rootfs is built: fix up WiFi nvram + drop stale files, then assemble the SD image:
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH)/board/radxa-zero/post-build.sh"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH)/board/radxa-zero/post-image.sh"
 BR2_ROOTFS_POST_SCRIPT_ARGS="$(BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH)/board/radxa-zero/genimage.cfg"
 
@@ -85,5 +86,16 @@ BR2_PACKAGE_LIBGUDEV=y                              # gudev-1.0 — build+runtim
 BR2_PACKAGE_DROPBEAR=y                              # ssh in for development
 BR2_PACKAGE_HTOP=y
 
+# --- WiFi (SSH-over-WiFi management; the composite/UVC gadget breaks ECM, so WiFi is the mgmt link) ---
+# Chip is the Ampak AP6212 (BCM43430); firmware blob is in linux-firmware, but its nvram ships as
+# brcmfmac43430-sdio.AP6212.txt while the driver wants brcmfmac43430-sdio.txt -> post-build.sh renames it.
+BR2_PACKAGE_LINUX_FIRMWARE=y
+BR2_PACKAGE_LINUX_FIRMWARE_BRCM_BCM43XX=y           # brcmfmac SDIO blobs (AP6212/43430/43438 etc.)
+BR2_PACKAGE_LINUX_FIRMWARE_BRCM_BCM43XXX=y          # brcmfmac SDIO blobs (AP6256/43455 etc.)
+BR2_PACKAGE_WIRELESS_REGDB=y                        # regulatory.db (avoids the boot 'failed to load' warn)
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+
 # --- Our app ----------------------------------------------------------------
 BR2_PACKAGE_ARTLYNK_VIEW=y
+BR2_PACKAGE_UVC_GADGET=y                            # userspace UVC feeder (uvcsink won't drive our gadget)
