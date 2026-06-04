@@ -1,0 +1,48 @@
+#!/bin/sh
+# CDC-ECM USB gadget: present a USB network device to the host (your Mac) so you can SSH in over the
+# USB-C cable — no serial, no HDMI. Plug the Radxa's OTG/power USB-C port into the Mac.
+#   Mac side: set the new USB network interface to 10.66.0.2/24, then:  ssh root@10.66.0.1  (pw: artlynk)
+GADGET_IP=10.66.0.1
+GADGET_MASK=255.255.255.0
+
+case "$1" in
+  start)
+	UDC=$(ls /sys/class/udc/ 2>/dev/null | head -n1)
+	if [ -z "$UDC" ]; then
+		echo "usbgadget: no UDC found (USB port not in peripheral/otg mode?) — skipping"
+		exit 0
+	fi
+	mount -t configfs none /sys/kernel/config 2>/dev/null
+	G=/sys/kernel/config/usb_gadget/g1
+	mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409" "$G/functions/ecm.usb0"
+	echo 0x1d6b > "$G/idVendor"
+	echo 0x0104 > "$G/idProduct"
+	echo 0x0200 > "$G/bcdUSB"
+	echo "ArtLynk"        > "$G/strings/0x409/manufacturer"
+	echo "ArtLynk Bridge" > "$G/strings/0x409/product"
+	echo "artlynk0001"    > "$G/strings/0x409/serialnumber"
+	echo "ECM" > "$G/configs/c.1/strings/0x409/configuration"
+	echo 250   > "$G/configs/c.1/MaxPower"
+	echo "02:00:00:66:00:01" > "$G/functions/ecm.usb0/dev_addr"
+	echo "02:00:00:66:00:02" > "$G/functions/ecm.usb0/host_addr"
+	ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/"
+	echo "$UDC" > "$G/UDC" && echo "usbgadget: bound ECM gadget to UDC $UDC"
+	# assign the device-side interface (the ECM gadget creates a usb* netdev)
+	IF=""
+	for i in 1 2 3 4 5; do
+		for n in /sys/class/net/usb*; do [ -e "$n" ] && IF=$(basename "$n") && break; done
+		[ -n "$IF" ] && break
+		sleep 1
+	done
+	if [ -n "$IF" ]; then
+		ifconfig "$IF" "$GADGET_IP" netmask "$GADGET_MASK" up
+		echo "usbgadget: $IF = $GADGET_IP   (ssh root@$GADGET_IP)"
+	else
+		echo "usbgadget: gadget bound but no usb* netdev appeared yet"
+	fi
+	;;
+  stop)
+	echo "" > /sys/kernel/config/usb_gadget/g1/UDC 2>/dev/null
+	;;
+  *) echo "Usage: $0 {start|stop}"; exit 1;;
+esac

@@ -18,3 +18,13 @@ CONFIG_V4L_MEM2MEM_DRIVERS=y
 CONFIG_VIDEO_MESON_VDEC=y
 # NOTE(hevc): HEVC support on meson-vdec varies by SoC/kernel. If 'hw' decode fails on the S905Y2,
 # fall back to DECODE=sw in /etc/artlynk/bridge.conf and/or a CoreELEC-style Amlogic kernel.
+
+# --- USB gadget (CDC-ECM): present a network device to a host (your Mac) for SSH-over-USB ---
+CONFIG_USB_GADGET=y
+CONFIG_USB_LIBCOMPOSITE=y
+CONFIG_USB_U_ETHER=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_ECM=y
+# Amlogic G12A USB controller (dwc3) provides the peripheral-mode UDC the gadget binds to.
+CONFIG_USB_DWC3=y
+CONFIG_USB_DWC3_MESON_G12A=y
