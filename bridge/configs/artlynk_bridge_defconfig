@@ -43,6 +43,8 @@ BR2_LINUX_KERNEL_INTREE_DTS_NAME="amlogic/meson-g12a-radxa-zero"
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 # extra options: USB CDC-ECM *host*, DRM/KMS (meson), V4L2 + Amlogic VDEC (HEVC) — see file:
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH)/board/radxa-zero/linux.fragment"
+# f_uvc bulk video-streaming endpoint support (mainline is ISOC-only; Amlogic dwc2 can't sustain ISOC IN):
+BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH)/board/radxa-zero/patches/linux/0001-uvc-bulk-mode.patch"
 
 # --- Bootloader: mainline U-Boot for radxa-zero -----------------------------
 # TODO(amlogic-fip): U-Boot alone is not bootable on Amlogic — it must be wrapped with the signed

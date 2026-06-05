@@ -28,6 +28,9 @@ setup_uvc() {   # build uvc.0 (MJPEG, one frame) and link it into the config; no
 	ln -sf "$U/streaming/header/h" "$U/streaming/class/hs/h"
 	ln -sf "$U/streaming/header/h" "$U/streaming/class/ss/h"
 	echo "$UVC_MAXPKT" > "$U/streaming_maxpacket" 2>/dev/null || true
+	# Bulk video-streaming endpoint (our f_uvc kernel patch): the Amlogic dwc2 won't sustain ISOC IN,
+	# so present a BULK VS endpoint. streaming_bulk_mult != 0 selects bulk (max_payload = mult*1024).
+	[ -f /etc/artlynk/uvc-bulk ] && echo 32 > "$U/streaming_bulk_mult" 2>/dev/null
 	ln -sf "$U" "$G/configs/c.1/uvc.0"
 }
 iad_class()  { echo 0xEF > "$G/bDeviceClass"; echo 0x02 > "$G/bDeviceSubClass"; echo 0x01 > "$G/bDeviceProtocol"; }
@@ -101,7 +104,8 @@ case "$1" in
 			[ -e "$v" ] || continue
 			case "$(cat "$v/name" 2>/dev/null)" in ""|*meson*|*decoder*|*vdec*) : ;; *) UVCNODE="/dev/$(basename "$v")"; break ;; esac
 		done
-		[ -n "$UVCNODE" ] && uvc-gadget -u "$UVCNODE" -f 1 -r 1 -i /etc/artlynk/uvc-image.jpg > /var/log/uvc-gadget.log 2>&1 &
+		[ -f /etc/artlynk/uvc-bulk ] && BULKARG="-b" || BULKARG=""
+		[ -n "$UVCNODE" ] && uvc-gadget $BULKARG -u "$UVCNODE" -f 1 -r 1 -i /etc/artlynk/uvc-image.jpg > /var/log/uvc-gadget.log 2>&1 &
 		sleep 14
 		ST=$(cat /sys/class/udc/$UDC/state 2>/dev/null)
 		{ echo "=== UVC boot test: mode=$MODE state=$ST maxpkt=$UVC_MAXPKT ==="
