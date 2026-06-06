@@ -72,14 +72,21 @@ BR2_PACKAGE_HOST_DOSFSTOOLS=y
 BR2_PACKAGE_HOST_MTOOLS=y
 
 # --- Video stack: GStreamer -> KMS/DRM (no X/Wayland) -----------------------
+# Pipeline:  tcpclientsrc(tap) ! h265parse ! {v4l2slh265dec HW | avdec_h265 SW} ! kmssink(HDMI)
+# Splashes:  filesrc ! pngdec ! imagefreeze ! kmssink   (the "connect goggle / drone" screens)
 BR2_PACKAGE_LIBDRM=y
 BR2_PACKAGE_GSTREAMER1=y
 BR2_PACKAGE_GST1_PLUGINS_BASE=y
+BR2_PACKAGE_GST1_PLUGINS_BASE_PLUGIN_TCP=y             # tcpclientsrc — pull the goggle's venc8 tap
 BR2_PACKAGE_GST1_PLUGINS_GOOD=y
-BR2_PACKAGE_GST1_PLUGINS_GOOD_V4L2=y                # V4L2 (stateless HEVC decoder lives here)
+BR2_PACKAGE_GST1_PLUGINS_GOOD_PLUGIN_V4L2=y            # v4l2 (stateful) — CORRECT symbol is _PLUGIN_V4L2
+BR2_PACKAGE_GST1_PLUGINS_GOOD_PNG=y                    # pngdec — splash images
+BR2_PACKAGE_GST1_PLUGINS_GOOD_PLUGIN_IMAGEFREEZE=y     # imagefreeze — hold a splash on screen
 BR2_PACKAGE_GST1_PLUGINS_BAD=y
-BR2_PACKAGE_GST1_PLUGINS_BAD_PLUGIN_KMS=y           # kmssink -> direct to HDMI framebuffer
-BR2_PACKAGE_GST1_LIBAV=y                            # avdec_h265 (software fallback, M2)
+BR2_PACKAGE_GST1_PLUGINS_BAD_PLUGIN_KMS=y              # kmssink -> direct to HDMI (DRM/KMS, no X)
+BR2_PACKAGE_GST1_PLUGINS_BAD_PLUGIN_VIDEOPARSERS=y     # h265parse
+BR2_PACKAGE_GST1_PLUGINS_BAD_PLUGIN_V4L2CODECS=y       # v4l2slh265dec — Amlogic stateless HW HEVC
+BR2_PACKAGE_GST1_LIBAV=y                               # avdec_h265 — software HEVC fallback
 # uvcsink lives in gst1-plugins-bad's 'uvcgadget' plugin, which Buildroot has no Kconfig symbol for and
 # force-disables (-Duvcgadget=disabled). build.sh flips that meson flag; the plugin needs libgudev:
 BR2_PACKAGE_LIBGUDEV=y                              # gudev-1.0 — build+runtime dep of uvcsink

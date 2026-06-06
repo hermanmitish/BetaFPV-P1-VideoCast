@@ -54,6 +54,10 @@ assign_ecm_ip() {
 
 case "$1" in
   start)
+	# The bridge HOSTS the goggle (USB-ECM in) and outputs HDMI, so by default it must NOT be a USB
+	# gadget — binding a gadget puts the dwc2 in peripheral mode and prevents hosting the goggle.
+	# The UVC/ECM gadget path (now superseded by HDMI-out) is opt-in: `touch /etc/artlynk/gadget-enable`.
+	[ -f /etc/artlynk/gadget-enable ] || { echo "usbgadget: disabled (HDMI-bridge mode)"; exit 0; }
 	UDC=$(ls /sys/class/udc/ 2>/dev/null | head -n1)
 	[ -z "$UDC" ] && { echo "usbgadget: no UDC — skipping"; exit 0; }
 	mount -t configfs none /sys/kernel/config 2>/dev/null

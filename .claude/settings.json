@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /tmp/sky_extract)",
+      "Bash(./.venv/bin/python tools/p1-ota-extract.py images/P1_SKY_v2.0.6_20260429_ea0929a.img /tmp/sky_extract)",
+      "Bash(xxd)",
+      "Bash(xxd dtb0.img)",
+      "Bash(dtc -I dtb -O dts dtb0.img)",
+      "Bash(xxd userapp0.img)",
+      "Bash(grep -iE \"record|\\\\.mp4|\\\\.mov|\\\\.ts$|dvr|muxer|mmcblk|/mnt|/media|sdcard|tf_card|/dev/mmc|mount\")",
+      "Bash(/Users/hermanmitish/private/FreeArtLynk-main/.venv/bin/python -c \"import ubireader; print\\('ubireader: OK'\\)\")",
+      "Bash(chmod +x board/radxa-zero/rootfs-overlay/usr/bin/artlynk-view)",
+      "Bash(awk '{print $5,$9,$6,$7,$8}')",
+      "Bash(awk '{print $1,$5,$NF}')",
+      "Bash(sshpass -p artlynk ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 root@192.168.1.22 ' *)",
+      "Bash(sshpass -p artlynk scp -O -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null bridge/board/radxa-zero/rootfs-overlay/usr/bin/artlynk-view root@192.168.1.22:/usr/bin/artlynk-view)",
+      "Bash(sshpass -p artlynk ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@192.168.1.22 ' *)",
+      "Bash(sshpass -p artlynk ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@192.168.1.22 'mkdir -p /lib/firmware/meson/vdec')",
+      "Bash(sshpass -p artlynk scp -O -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null bridge/docker/images/fw/g12a_*.bin root@192.168.1.22:/lib/firmware/meson/vdec/)",
+      "Bash(xz -l radxa-zero_debian_bullseye_kde_b23.img.xz)",
+      "Bash(time xz -dk -T0 radxa-zero_debian_bullseye_kde_b23.img.xz)",
+      "Bash(./.venv/bin/python tools/p1-ota-extract.py images/P1_GND_VR04_v2.0.6_20260429_ea0929a.img /tmp/gnd_extract)"
+    ]
+  }
+}
