@@ -12,14 +12,14 @@ app, **P1 Video Cast**, decodes it, optionally overlays the OSD, records, and ca
 ## What you get
 - **Live 1080p H.265** to the Mac over USB‑C, low latency (`tcp://10.55.0.1:9000`)
 - **OSD overlay** — the goggle's telemetry, tapped from its framebuffer (`:9001`) and composited on top
-- **Recording** — MP4 to `~/Movies`, OSD baked in, with zero live‑view slowdown
+- **Recording** — MP4 to `~/Movies`, OSD baked in, with minimal live‑view slowdown
 - **OBS** — one‑click H.264/MPEG‑TS re‑stream (`tcp://127.0.0.1:9200`) for an OBS Media Source
 
 ## Requirements
 - A **BetaFPV P1 HD** (non‑Pro) goggle — verified on firmware v2.0.5 / v2.0.6
 - A bound drone / air‑unit (the encoder only runs when there's video)
 - macOS · Python 3 · `brew install zig ffmpeg` (zig cross‑compiles the goggle shim)
-- A **3.3 V USB‑TTL serial adapter** — for the one‑time install only
+- A **USB‑TTL serial adapter** — for the one‑time install only. Remove goggles soft resin part and front panel to access DEBUG port.
 
 ## Install (one time, over serial)
 1. Wire the adapter to the goggle `DEBUG` header — `GND/TX0/RX0`, **crossed**, **1228800 baud**,
@@ -44,8 +44,8 @@ Plug in the goggle, bind a drone — video appears. Toggle **OSD** for telemetry
 re‑stream, **Record** to save an MP4. See [app/README.md](app/README.md).
 
 Prefer the terminal? `tools/view-venc8.sh` (one‑liner `ffplay`) or `tools/stream-venc8-loop.sh`
-(always‑on). The deploy also enables the firmware's built‑in **RTSP** server
-(`rtsp://10.55.0.1:554/venc8/stream`, ~3 s latency) if you'd rather use any RTSP player.
+(always‑on). The deploy enables the firmware's built‑in **RTSP** server but serves its video from chn8 H.265 encoder with tee to tcp:9000
+(`rtsp://10.55.0.1:554/venc8/stream`, ~3 s latency) is also accessible if you'd rather use any RTSP player, though from my experience it was harder to deal with and I wasn't able to achieve good latency despite tweaking VLC settings for quite some time.
 
 ## Layout
 | Path | What |
@@ -61,8 +61,7 @@ Prefer the terminal? `tools/view-venc8.sh` (one‑liner `ffplay`) or `tools/stre
 | `docs/` | how the ECM+RTSP path works, venc8 tap internals, Pro‑vs‑non‑Pro firmware notes |
 
 ## Notes & limits
-- The goggle's USB port is **device‑role‑locked**, so the obvious "make it a UVC webcam" route is a
-  hardware dead‑end on this model — hence the network‑tap approach.
+- The goggle's USB port is **device‑role‑locked**, so the obvious "make it a UVC webcam" route didn't work out and is potentially a hardware dead‑end on this model — hence the network‑tap approach.
 - The built‑in RTSP server leaks sessions after a few connect/disconnect cycles (reboot to clear);
   the venc8 tap is the recommended path.
 
