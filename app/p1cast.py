@@ -158,8 +158,8 @@ def finalize_recording(h265_path, osd_path, mp4_path, duration=0.0, progress=Non
 
 
 class OSDThread(QThread):
-    """Reads the goggle's fb0 OSD tap (device/fbtap.c, RLE RGB565 on :OSD_PORT) and keeps the
-    latest frame as an alpha-keyed QImage (black -> transparent). VideoView paints it on top of
+    """Reads the goggle's fb0 OSD tap (device/fbtap.c, RLE ARGB4444 on :OSD_PORT) and keeps the
+    latest frame as an alpha-keyed QImage (alpha 0 -> transparent). VideoView paints it on top of
     the video OR the placeholder, GPU-composited. Only connects while .enabled (UI toggle)."""
     def __init__(self):
         super().__init__()

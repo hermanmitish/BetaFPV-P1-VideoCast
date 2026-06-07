@@ -79,7 +79,8 @@ telnetd -l /bin/sh -p 23 &
 
 # ---- OSD tap: serve the goggle's fb0 telemetry overlay on tcp:9001 (device/fbtap.c) ----
 # Waits for the framebuffer to come up, then streams the OSD layer to the P1 Video Cast app.
-[ -x /usrdata/fbtap ] && ( while [ ! -e /dev/fb0 ]; do sleep 1; done; /usrdata/fbtap ) &
+# Respawns if it ever exits (e.g. /dev/fb0 not fully initialized on the first try).
+[ -x /usrdata/fbtap ] && ( while [ ! -e /dev/fb0 ]; do sleep 1; done; while true; do /usrdata/fbtap; sleep 2; done ) &
 
 # ---- rest of the stock GND boot ----
 echo "/tmp/sdcard/core-%e-%p-%s" > /proc/sys/kernel/core_pattern
