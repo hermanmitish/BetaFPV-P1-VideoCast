@@ -85,7 +85,8 @@
       "Bash(app/.venv/bin/python -c *)",
       "Bash(pkill -f artlynkstream)",
       "Bash(awk '{print \"pid\",$2}')",
-      "Bash(app/.venv/bin/python -m py_compile app/artlynkstream.py)"
+      "Bash(app/.venv/bin/python -m py_compile app/artlynkstream.py)",
+      "Bash(lsof -nP -iTCP:9200 -sTCP:LISTEN)"
     ]
   }
 }

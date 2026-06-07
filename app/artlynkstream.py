@@ -14,7 +14,7 @@ disabled so frames are shown the instant they decode — matching ffplay's laten
 much on this raw stream.)  Requires:  pip install PySide6 av
 Run:  app/.venv/bin/python app/artlynkstream.py
 """
-import os, sys, time, socket, struct, datetime, subprocess, shutil, threading
+import os, sys, time, socket, struct, queue, datetime, subprocess, shutil, threading
 import av
 import numpy as np
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QRect
@@ -239,6 +239,118 @@ class OSDThread(QThread):
             self._rec_f = None
 
 
+class _BroadcastIO:
+    """A write-only file object PyAV muxes MPEG-TS into; each write is fanned out to all clients."""
+    def __init__(self, sendfn): self._send = sendfn
+    def write(self, data): self._send(bytes(data)); return len(data)
+    def seekable(self): return False
+
+
+class RestreamServer:
+    """Lazy local H.264/MPEG-TS re-stream for OBS. Listens on tcp://127.0.0.1:PORT and encodes ONLY
+    while .enabled AND a client is connected (zero cost otherwise). Frequent keyframes (gop=15) so
+    OBS syncs fast with a tiny buffer. OBS: Media Source, Input tcp://127.0.0.1:9200."""
+    def __init__(self, port=9200):
+        self.port = port
+        self.enabled = False
+        self.osd = None               # OSDThread — composited into the OBS feed whenever it has a frame
+        self.running = True
+        self._q = queue.Queue(maxsize=1)
+        self._clients = []
+        self._lock = threading.Lock()
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+        threading.Thread(target=self._encode_loop, daemon=True).start()
+
+    def stop(self): self.running = False
+
+    def feed(self, frame):
+        if not self.enabled:
+            return
+        try:
+            self._q.put_nowait(frame)
+        except queue.Full:
+            try: self._q.get_nowait()          # drop the stale frame, keep the newest
+            except queue.Empty: pass
+            try: self._q.put_nowait(frame)
+            except queue.Full: pass
+
+    def _nclients(self):
+        with self._lock:
+            return len(self._clients)
+
+    def _accept_loop(self):
+        try:
+            ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            ls.bind(("127.0.0.1", self.port)); ls.listen(2)
+        except Exception as ex:
+            sys.stderr.write(f"[restream] bind: {ex}\n"); return
+        while self.running:
+            try:
+                c, _ = ls.accept()
+                c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                with self._lock: self._clients.append(c)
+            except Exception:
+                time.sleep(0.2)
+
+    def _broadcast(self, data):
+        with self._lock:
+            dead = []
+            for c in self._clients:
+                try: c.sendall(data)
+                except Exception: dead.append(c)
+            for c in dead:
+                self._clients.remove(c)
+                try: c.close()
+                except Exception: pass
+
+    def _encode_loop(self):
+        out = st = None; n = 0
+        while self.running:
+            if not (self.enabled and self._nclients() > 0):
+                if out is not None:
+                    try:
+                        for p in st.encode(): out.mux(p)
+                        out.close()
+                    except Exception: pass
+                    out = st = None
+                try: self._q.get(timeout=0.2)
+                except queue.Empty: pass
+                continue
+            try: frame = self._q.get(timeout=0.5)
+            except queue.Empty: continue
+            try:
+                osd = self.osd.get_np() if self.osd is not None else None
+                if osd is not None:                        # composite OSD (cheap; matches the app view)
+                    rgb = frame.to_ndarray(format='rgb24')
+                    if osd.shape[:2] == rgb.shape[:2]:
+                        a = osd[:, :, 3:4].astype(np.uint16)
+                        rgb = ((rgb.astype(np.uint16) * (255 - a) + osd[:, :, :3].astype(np.uint16) * a) // 255).astype('uint8')
+                    yuv = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb), format='rgb24').reformat(format='yuv420p')
+                else:
+                    yuv = frame.reformat(format='yuv420p')
+                if out is None:
+                    out = av.open(_BroadcastIO(self._broadcast), mode='w', format='mpegts')
+                    try: st = out.add_stream('h264_videotoolbox', rate=30)
+                    except Exception:
+                        st = out.add_stream('libx264', rate=30)
+                        try: st.options = {'preset': 'ultrafast', 'tune': 'zerolatency'}
+                        except Exception: pass
+                    st.width = yuv.width; st.height = yuv.height; st.pix_fmt = 'yuv420p'
+                    try: st.codec_context.gop_size = 15
+                    except Exception: pass
+                    try: st.bit_rate = 6_000_000
+                    except Exception: pass
+                    n = 0
+                yuv.pts = n; n += 1
+                for p in st.encode(yuv): out.mux(p)
+            except Exception as ex:
+                sys.stderr.write(f"[restream] {type(ex).__name__}: {ex}\n"); sys.stderr.flush()
+                try: out.close()
+                except Exception: pass
+                out = st = None
+
+
 class DecodeThread(QThread):
     frame_ready = Signal(QImage)
     state_changed = Signal(str)
@@ -249,6 +361,7 @@ class DecodeThread(QThread):
         self.rec_path = None          # set by UI to tee raw H.265 to this .h265 file, None to stop
         self.force_reconnect = False  # set on record start -> reconnect so the file begins at an IDR
         self._rec_f = None
+        self.restream = None          # RestreamServer — fed each decoded frame for the OBS re-stream
 
     def stop(self):
         self.running = False
@@ -293,6 +406,8 @@ class DecodeThread(QThread):
                             if not got:
                                 got = True; self.state_changed.emit(STATE_STREAMING)
                             self.frame_ready.emit(img)
+                        if self.restream is not None:
+                            self.restream.feed(frame)
             except Exception as ex:
                 if "Immediate exit" not in str(ex):    # read timeout (no drone) is expected/quiet
                     sys.stderr.write(f"[decode] {type(ex).__name__}: {ex}\n"); sys.stderr.flush()
@@ -411,10 +526,17 @@ class ArtLynkStream(QMainWindow):
             "QPushButton{color:#eee;background:#2a2a2a;border:1px solid #3a3a3a;border-radius:6px;padding:6px 14px;font-size:13px;}"
             "QPushButton:checked{color:#fff;background:#1b5fa0;border-color:#3080c2;}")
         self.osd_btn.toggled.connect(self._toggle_osd)
+        self.obs_btn = QPushButton("OBS")
+        self.obs_btn.setCheckable(True); self.obs_btn.setCursor(Qt.PointingHandCursor)
+        self.obs_btn.setToolTip("Re-stream H.264 for OBS — Media Source, Input: tcp://127.0.0.1:9200")
+        self.obs_btn.setStyleSheet(
+            "QPushButton{color:#eee;background:#2a2a2a;border:1px solid #3a3a3a;border-radius:6px;padding:6px 14px;font-size:13px;}"
+            "QPushButton:checked{color:#fff;background:#7a3da0;border-color:#9a5dc2;}")
+        self.obs_btn.toggled.connect(self._toggle_obs)
         self.save_status = QLabel(""); self.save_status.setStyleSheet("color:#c9a227; font-size:13px;")
         hb.addWidget(self.dot); hb.addSpacing(6); hb.addWidget(self.status)
         hb.addStretch(1); hb.addWidget(self.save_status); hb.addSpacing(14)
-        hb.addWidget(self.osd_btn); hb.addSpacing(8); hb.addWidget(self.rec)
+        hb.addWidget(self.obs_btn); hb.addSpacing(8); hb.addWidget(self.osd_btn); hb.addSpacing(8); hb.addWidget(self.rec)
         lay.addWidget(bar)
 
         self.state = None
@@ -429,6 +551,9 @@ class ArtLynkStream(QMainWindow):
         self.osd = OSDThread()
         self.view.set_osd(self.osd)
         self.osd.start()
+        self.restream = RestreamServer()
+        self.restream.osd = self.osd
+        self.dec.restream = self.restream
         self.dec.start()
 
         self.rectimer = QTimer(self); self.rectimer.timeout.connect(self.update_rec_label); self.rectimer.start(500)
@@ -457,6 +582,10 @@ class ArtLynkStream(QMainWindow):
     def _toggle_osd(self, on):
         self.osd.enabled = on
         self.view.set_osd_on(on)
+
+    def _toggle_obs(self, on):
+        self.restream.enabled = on
+        self.save_msg.emit("OBS re-stream ON  ·  Media Source → tcp://127.0.0.1:9200" if on else "")
 
     # ---- recording: tee raw H.265 + log OSD live (cheap); overlay+encode (or remux) offline on stop ----
     def toggle_record(self):
@@ -509,6 +638,8 @@ class ArtLynkStream(QMainWindow):
 
     def closeEvent(self, e):
         try: self.dec.rec_path = None
+        except Exception: pass
+        try: self.restream.stop()
         except Exception: pass
         try: self.osd.stop()
         except Exception: pass
