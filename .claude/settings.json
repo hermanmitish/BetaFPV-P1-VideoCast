@@ -82,7 +82,10 @@
       "Bash(./.venv/bin/python tools/goggle-net.py run 'killall fbtap 2>/dev/null; sleep 1; setsid /tmp/fbtap </dev/null >/tmp/fbtap.log 2>&1 & sleep 1; \\(netstat -ltn 2>/dev/null||ss -ltn 2>/dev/null\\)|grep 9001 && echo PORT_UP')",
       "Bash(pkill -f \"artlynkstream\")",
       "Bash(./.venv/bin/python -c *)",
-      "Bash(app/.venv/bin/python -c *)"
+      "Bash(app/.venv/bin/python -c *)",
+      "Bash(pkill -f artlynkstream)",
+      "Bash(awk '{print \"pid\",$2}')",
+      "Bash(app/.venv/bin/python -m py_compile app/artlynkstream.py)"
     ]
   }
 }

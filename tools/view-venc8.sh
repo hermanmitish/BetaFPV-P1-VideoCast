@@ -9,4 +9,4 @@
 # NOTE: do NOT add -fflags nobuffer / -framedrop here — they drop the initial IDR and the
 # decoder never locks. Plain -flags low_delay is already very low latency.
 HOST="${1:-10.55.0.1}"; PORT="${2:-9000}"
-exec ffplay -flags low_delay -f h264 "tcp://${HOST}:${PORT}"
+exec ffplay -flags low_delay -f hevc "tcp://${HOST}:${PORT}"

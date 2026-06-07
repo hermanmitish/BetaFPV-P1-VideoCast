@@ -40,12 +40,119 @@ def reachable(host, port, timeout=0.25):
         return False
 
 
-def resize_nn(img, new_h, new_w):
-    """Nearest-neighbour resize of an HxWx3 uint8 array (no PIL/cv2 needed)."""
-    h, w = img.shape[0], img.shape[1]
-    yi = (np.arange(new_h) * h) // new_h
-    xi = (np.arange(new_w) * w) // new_w
-    return img[yi][:, xi]
+def osd_rle_to_rgba(payload, w, h):
+    """Decode one fbtap RLE frame (ARGB4444) to an HxWx4 RGBA uint8 array."""
+    runs = np.frombuffer(payload, dtype='<u2').reshape(-1, 2)
+    a = np.repeat(runs[:, 1], runs[:, 0].astype(np.int64)).reshape(h, w)
+    alpha = (((a >> 12) & 0xF) * 17).astype('uint8')   # 0 = video-through, F = opaque
+    r = (((a >> 8) & 0xF) * 17).astype('uint8')
+    g = (((a >> 4) & 0xF) * 17).astype('uint8')
+    b = ((a & 0xF) * 17).astype('uint8')
+    return np.ascontiguousarray(np.dstack([r, g, b, alpha]))
+
+
+def _new_encoder(out, w, h, fps):
+    try:
+        st = out.add_stream('h264_videotoolbox', rate=fps)   # Mac HW encoder
+    except Exception:
+        st = out.add_stream('libx264', rate=fps)
+        try: st.options = {'preset': 'fast'}
+        except Exception: pass
+    st.width = w; st.height = h; st.pix_fmt = 'yuv420p'
+    try: st.bit_rate = 12_000_000
+    except Exception: pass
+    return st
+
+
+_FINALIZE_LOCK = threading.Lock()   # serialize saves so concurrent recordings don't pile onto the CPU
+
+
+def finalize_recording(h265_path, osd_path, mp4_path, duration=0.0, progress=None):
+    """OFFLINE (background) finalize of a recording. If OSD frames were logged, decode the raw H.265,
+    alpha-composite the time-aligned OSD onto each frame, and HW-re-encode -> MP4. If no OSD was
+    logged, just losslessly remux H.265 -> MP4 (ffmpeg -c copy). Deletes the intermediates."""
+    osd_frames = []                                    # list of (time_sec, rgba)
+    if os.path.exists(osd_path):
+        try:
+            with open(osd_path, 'rb') as f:
+                hdr = f.read(8)
+                if len(hdr) == 8:
+                    ow, oh = struct.unpack('<II', hdr)
+                    while True:
+                        fh = f.read(8)
+                        if len(fh) < 8: break
+                        t, plen = struct.unpack('<fI', fh)
+                        pl = f.read(plen)
+                        if len(pl) < plen: break
+                        osd_frames.append((t, osd_rle_to_rgba(pl, ow, oh)))
+        except Exception:
+            osd_frames = []
+
+    # raw H.265 has no reliable timing -> derive real fps from packet count / recording duration
+    npkt = 0
+    try:
+        c = av.open(h265_path, format='hevc')
+        for _ in c.demux(c.streams.video[0]):
+            npkt += 1
+        c.close()
+    except Exception:
+        pass
+    fps = round(npkt / duration) if (duration > 0.2 and npkt) else 60
+    for std in (24, 25, 30, 48, 50, 60):               # snap to a clean rate (tolerate timing slop)
+        if abs(fps - std) <= 2:
+            fps = std; break
+    fps = max(1, min(120, fps))
+
+    if not osd_frames:                                 # no OSD -> lossless remux
+        ff = shutil.which('ffmpeg') or next((p for p in ('/opt/homebrew/bin/ffmpeg',
+                '/usr/local/bin/ffmpeg') if os.path.exists(p)), None)
+        if ff:
+            r = subprocess.run([ff, '-y', '-loglevel', 'error', '-fflags', '+genpts', '-r', str(fps),
+                                '-f', 'hevc', '-i', h265_path, '-c', 'copy', '-tag:v', 'hvc1', mp4_path],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if r.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 0:
+                for p in (h265_path, osd_path):
+                    try: os.remove(p)
+                    except Exception: pass
+                return mp4_path
+        # ffmpeg missing/failed -> fall through to the re-encode path
+
+    inp = av.open(h265_path, format='hevc')
+    vs = inp.streams.video[0]; vs.thread_type = "AUTO"
+    out = av.open(mp4_path, mode='w')
+    ost = None; n = 0; oi = 0
+    try:
+        for packet in inp.demux(vs):
+            for frame in packet.decode():
+                rgb = frame.to_ndarray(format='rgb24')
+                if osd_frames:
+                    t = n / fps                        # align OSD to the real frame time
+                    while oi + 1 < len(osd_frames) and osd_frames[oi + 1][0] <= t:
+                        oi += 1
+                    osd = osd_frames[oi][1]
+                    if osd.shape[:2] == rgb.shape[:2]:
+                        a = osd[:, :, 3:4].astype(np.uint16)
+                        rgb = ((rgb.astype(np.uint16) * (255 - a) + osd[:, :, :3].astype(np.uint16) * a) // 255).astype('uint8')
+                if ost is None:
+                    ost = _new_encoder(out, rgb.shape[1], rgb.shape[0], fps)
+                vf = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb), format='rgb24')
+                vf.pts = n; n += 1
+                if progress and n % 30 == 0:
+                    progress(n, npkt)
+                for pkt in ost.encode(vf):
+                    out.mux(pkt)
+        if ost is not None:
+            for pkt in ost.encode():
+                out.mux(pkt)
+    finally:
+        try: out.close()
+        except Exception: pass
+        try: inp.close()
+        except Exception: pass
+    for p in (h265_path, osd_path):
+        try: os.remove(p)
+        except Exception: pass
+    return mp4_path
 
 
 class OSDThread(QThread):
@@ -56,18 +163,28 @@ class OSDThread(QThread):
         super().__init__()
         self.running = True
         self.enabled = False
+        self.rec_path = None          # set by UI to log OSD frames (+timestamps) during a recording
+        self.rec_start = 0.0
+        self._rec_f = None
         self._latest = None
+        self._latest_np = None
         self._lock = threading.Lock()
 
     def get(self):
         with self._lock:
             return self._latest
 
+    def get_np(self):
+        with self._lock:
+            return self._latest_np
+
     def stop(self):
         self.running = False
 
     def run(self):
         while self.running:
+            if not self.rec_path:                  # recording stopped (or never started) -> close log
+                self._close_log()
             if not self.enabled:
                 with self._lock: self._latest = None
                 self.msleep(200); continue
@@ -89,25 +206,37 @@ class OSDThread(QThread):
                     raise ValueError("bad magic")
                 while self.running and self.enabled:
                     (plen,) = struct.unpack('<I', recvn(4))
-                    runs = np.frombuffer(recvn(plen), dtype='<u2').reshape(-1, 2)
-                    a = np.repeat(runs[:, 1], runs[:, 0].astype(np.int64)).reshape(h, w)  # ARGB4444
-                    alpha = (((a >> 12) & 0xF) * 17).astype('uint8')   # goggle's real OSD alpha (0=video-through, F=opaque)
-                    r = (((a >> 8) & 0xF) * 17).astype('uint8')
-                    g = (((a >> 4) & 0xF) * 17).astype('uint8')
-                    b = ((a & 0xF) * 17).astype('uint8')
-                    rgba = np.ascontiguousarray(np.dstack([r, g, b, alpha]))
+                    payload = recvn(plen)
+                    rgba = osd_rle_to_rgba(payload, w, h)
                     img = QImage(rgba.tobytes(), w, h, 4 * w, QImage.Format_RGBA8888).copy()
                     with self._lock:
                         self._latest = img
+                        self._latest_np = rgba
+                    if self.rec_path:              # log this OSD frame (RLE + timestamp) for the recording
+                        try:
+                            if self._rec_f is None:
+                                self._rec_f = open(self.rec_path, 'wb')
+                                self._rec_f.write(struct.pack('<II', w, h))
+                            self._rec_f.write(struct.pack('<fI', time.time() - self.rec_start, len(payload)) + payload)
+                        except Exception: pass
+                    else:
+                        self._close_log()
             except Exception:
                 pass
             finally:
                 if s is not None:
                     try: s.close()
                     except Exception: pass
-                with self._lock: self._latest = None
+                with self._lock: self._latest = None; self._latest_np = None
             if self.running and self.enabled:
                 self.msleep(600)
+        self._close_log()
+
+    def _close_log(self):
+        if self._rec_f is not None:
+            try: self._rec_f.close()
+            except Exception: pass
+            self._rec_f = None
 
 
 class DecodeThread(QThread):
@@ -117,9 +246,9 @@ class DecodeThread(QThread):
     def __init__(self):
         super().__init__()
         self.running = True
-        self.rec_path = None          # set by UI to start recording, None to stop
-        self.force_reconnect = False  # set by UI on record start -> reconnect to land on a fresh IDR
-        self._rec_file = None
+        self.rec_path = None          # set by UI to tee raw H.265 to this .h265 file, None to stop
+        self.force_reconnect = False  # set on record start -> reconnect so the file begins at an IDR
+        self._rec_f = None
 
     def stop(self):
         self.running = False
@@ -140,28 +269,24 @@ class DecodeThread(QThread):
             try:
                 vs = container.streams.video[0]
                 vs.thread_type = "NONE"                 # frames out immediately -> low latency
-                extradata = bytes(vs.codec_context.extradata or b"")   # VPS/SPS/PPS for the file header
+                extradata = bytes(vs.codec_context.extradata or b"")   # VPS/SPS/PPS header
                 self.state_changed.emit(STATE_WAITING)
-                # Open (or continue) the recording at this clean connection start. Because a record
-                # start forces a reconnect, the very first packets here are params + a fresh IDR, so
-                # the file always begins at a decodable keyframe. We also write the params explicitly.
-                if self.rec_path:
-                    if self._rec_file is None:
-                        try: self._rec_file = open(self.rec_path, "wb")
-                        except Exception: self._rec_file = None
-                    if self._rec_file is not None and extradata:
-                        self._rec_file.write(extradata)
+                if self.rec_path and self._rec_f is None:   # this connection started at a fresh IDR
+                    try:
+                        self._rec_f = open(self.rec_path, "wb")
+                        if extradata: self._rec_f.write(extradata)
+                    except Exception: self._rec_f = None
                 for packet in container.demux(vs):
                     if not self.running or self.force_reconnect:
                         break
-                    if self._rec_file is not None:
-                        if self.rec_path:
-                            try: self._rec_file.write(bytes(packet))
+                    if self.rec_path:                   # tee raw H.265 — cheap, lossless, no live load
+                        if self._rec_f is not None:
+                            try: self._rec_f.write(bytes(packet))
                             except Exception: pass
-                        else:                            # stop requested
-                            try: self._rec_file.close()
-                            except Exception: pass
-                            self._rec_file = None
+                    elif self._rec_f is not None:       # stop requested -> close the tee file
+                        try: self._rec_f.close()
+                        except Exception: pass
+                        self._rec_f = None
                     for frame in packet.decode():
                         img = self._to_qimage(frame)
                         if img is not None:
@@ -176,8 +301,8 @@ class DecodeThread(QThread):
                 except Exception: pass
             if not got:                                 # connected but no frames (no drone yet)
                 self.state_changed.emit(STATE_WAITING); time.sleep(0.2)
-        if self._rec_file is not None:
-            try: self._rec_file.close()
+        if self._rec_f is not None:
+            try: self._rec_f.close()
             except Exception: pass
 
     def _to_qimage(self, frame):
@@ -256,7 +381,8 @@ def find_ffmpeg():
 
 
 class ArtLynkStream(QMainWindow):
-    status_msg = Signal(str)          # thread-safe status updates (e.g. from the remux thread)
+    status_msg = Signal(str)          # thread-safe connection-status updates
+    save_msg = Signal(str)            # thread-safe save-progress updates (a separate label)
 
     def __init__(self):
         super().__init__()
@@ -285,15 +411,18 @@ class ArtLynkStream(QMainWindow):
             "QPushButton{color:#eee;background:#2a2a2a;border:1px solid #3a3a3a;border-radius:6px;padding:6px 14px;font-size:13px;}"
             "QPushButton:checked{color:#fff;background:#1b5fa0;border-color:#3080c2;}")
         self.osd_btn.toggled.connect(self._toggle_osd)
+        self.save_status = QLabel(""); self.save_status.setStyleSheet("color:#c9a227; font-size:13px;")
         hb.addWidget(self.dot); hb.addSpacing(6); hb.addWidget(self.status)
-        hb.addStretch(1); hb.addWidget(self.osd_btn); hb.addSpacing(8); hb.addWidget(self.rec)
+        hb.addStretch(1); hb.addWidget(self.save_status); hb.addSpacing(14)
+        hb.addWidget(self.osd_btn); hb.addSpacing(8); hb.addWidget(self.rec)
         lay.addWidget(bar)
 
         self.state = None
-        self.rec_path = None
+        self.rec_base = None
         self.rec_started = 0.0
 
         self.status_msg.connect(self.status.setText)
+        self.save_msg.connect(self.save_status.setText)
         self.dec = DecodeThread()
         self.dec.frame_ready.connect(self.view.set_frame)
         self.dec.state_changed.connect(self.on_state)
@@ -329,47 +458,45 @@ class ArtLynkStream(QMainWindow):
         self.osd.enabled = on
         self.view.set_osd_on(on)
 
-    # ---- recording: tee raw H.265 packets (from a fresh IDR), remux to .mp4 on stop ----
+    # ---- recording: tee raw H.265 + log OSD live (cheap); overlay+encode (or remux) offline on stop ----
     def toggle_record(self):
         if self.rec.isChecked():
             os.makedirs(RECDIR, exist_ok=True)
             ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            self.rec_path = os.path.join(RECDIR, f"ArtLynkStream-{ts}.h265")
-            self.rec_started = time.time()
-            self.dec.rec_path = self.rec_path
-            self.dec.force_reconnect = True          # reconnect so recording starts at a fresh IDR
+            base = os.path.join(RECDIR, f"ArtLynkStream-{ts}")
+            self.rec_base = base
+            self.rec_started = now = time.time()
+            self.osd.rec_start = now
+            self.osd.rec_path = base + ".osd"         # OSD logger writes frames only while OSD is on
+            self.dec.rec_path = base + ".h265"        # raw video tee
+            self.dec.force_reconnect = True           # reconnect so the .h265 begins at an IDR
         else:
             self.dec.rec_path = None
-            self._finalize_recording()
+            self.osd.rec_path = None
+            dur = max(0.1, time.time() - self.rec_started)
+            self.save_msg.emit("⏳ Saving…  (keep the app open)")
+            self._finalize_async(self.rec_base, dur)
 
-    def _finalize_recording(self):
-        src = self.rec_path; self.rec_path = None
-        if not src:
+    def _finalize_async(self, base, dur):
+        if not base:
             return
-        mp4 = src[:-5] + ".mp4"
-        ff = self.ffmpeg
+        h265, osd, mp4 = base + ".h265", base + ".osd", base + ".mp4"
 
         def work():
-            for _ in range(40):                      # wait for the decode thread to flush+close the file
-                if os.path.exists(src) and os.path.getsize(src) > 0:
+            last = None                               # wait until the tee files stop growing (closed)
+            for _ in range(120):
+                cur = (os.path.getsize(h265) if os.path.exists(h265) else 0,
+                       os.path.getsize(osd) if os.path.exists(osd) else 0)
+                if cur == last and cur[0] > 0:
                     break
-                time.sleep(0.05)
-            if not ff:
-                self.status_msg.emit(f"Saved {os.path.basename(src)} (ffmpeg not found for .mp4)")
-                return
-            try:
-                r = subprocess.run([ff, "-y", "-loglevel", "error", "-fflags", "+genpts",
-                                    "-r", "60", "-f", "hevc", "-i", src,
-                                    "-c", "copy", "-tag:v", "hvc1", mp4],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                if r.returncode == 0 and os.path.exists(mp4) and os.path.getsize(mp4) > 0:
-                    try: os.remove(src)
-                    except Exception: pass
-                    self.status_msg.emit(f"Saved {os.path.basename(mp4)}")
-                else:
-                    self.status_msg.emit(f"Saved {os.path.basename(src)} (raw H.265; .mp4 remux failed)")
-            except Exception as ex:
-                self.status_msg.emit(f"Saved {os.path.basename(src)} (raw; {ex})")
+                last = cur; time.sleep(0.1)
+            cb = lambda n, tot: self.save_msg.emit(f"⏳ Saving…  {min(99, int(n * 100 / max(1, tot)))}%  (keep the app open)")
+            with _FINALIZE_LOCK:                      # one save at a time -> no CPU pile-up
+                try:
+                    finalize_recording(h265, osd, mp4, dur, cb)
+                    self.save_msg.emit(f"✓ Saved {os.path.basename(mp4)}")
+                except Exception as ex:
+                    self.save_msg.emit(f"⚠ Save failed: {ex}")
 
         threading.Thread(target=work, daemon=True).start()
 
