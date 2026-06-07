@@ -11,25 +11,29 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 USE_UART=0; [ "${1:-}" = "--uart" ] && USE_UART=1
 
 command -v zig >/dev/null || { echo "need zig (brew install zig)"; exit 1; }
-echo "[*] building libvenc8tap.so (aarch64/glibc-2.25)..."
+echo "[*] building venc8tap.so + fbtap (aarch64/glibc-2.25)..."
 mkdir -p "$HERE/build"
 zig cc -target aarch64-linux-gnu.2.25 -shared -fPIC -O2 -s \
   -o "$HERE/build/venc8tap.so" "$HERE/device/venc8tap.c" -ldl -lpthread
+zig cc -target aarch64-linux-gnu.2.25 -O2 -s \
+  -o "$HERE/build/fbtap" "$HERE/device/fbtap.c"
 
 if [ "$USE_UART" = "1" ]; then
   VENV="$HERE/.venv"; [ -x "$VENV/bin/python" ] || { python3 -m venv "$VENV"; "$VENV/bin/pip" install -q pyserial; }
   PY="$VENV/bin/python"; G="$HERE/tools/goggle-uart.py"
   echo "[*] uploading over UART..."
   "$PY" "$G" bupload "$HERE/build/venc8tap.so" /usrdata/libvenc8tap.so
+  "$PY" "$G" bupload "$HERE/build/fbtap" /usrdata/fbtap
   "$PY" "$G" upload  "$HERE/device/run_dbg-venc8.sh" /usrdata/run_dbg.sh
-  "$PY" "$G" run "cp /usr/usrdata/buildtime /usrdata/buildtime; chmod +x /usrdata/run_dbg.sh; echo deployed"
+  "$PY" "$G" run "cp /usr/usrdata/buildtime /usrdata/buildtime; chmod +x /usrdata/run_dbg.sh /usrdata/fbtap; echo deployed"
   "$PY" "$G" reboot
 else
   N="python3 $HERE/tools/goggle-net.py"
   echo "[*] deploying over USB-ECM (telnet)..."
   $N push "$HERE/build/venc8tap.so" /usrdata/libvenc8tap.so
+  $N push "$HERE/build/fbtap" /usrdata/fbtap
   $N push "$HERE/device/run_dbg-venc8.sh" /usrdata/run_dbg.sh
-  $N run "cp /usr/usrdata/buildtime /usrdata/buildtime; chmod +x /usrdata/run_dbg.sh; echo deployed"
+  $N run "cp /usr/usrdata/buildtime /usrdata/buildtime; chmod +x /usrdata/run_dbg.sh /usrdata/fbtap; echo deployed"
   $N run "reboot" || true
 fi
 echo "[*] done. Bind a drone, then:  tools/view-venc8.sh"

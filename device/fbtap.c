@@ -1,9 +1,10 @@
-/* fbtap.c — tap the goggle's OSD framebuffer (/dev/fb0, 1920x1080 RGB565) over TCP.
+/* fbtap.c — tap the goggle's OSD framebuffer (/dev/fb0, 1920x1080, 16bpp ARGB4444) over TCP.
  * Read-only + a listening socket — does NOT touch USB role, so the ECM/net link stays up.
+ * Sends the raw 16bpp pixels verbatim; the host decodes ARGB4444 (alpha 0 = let video through).
  * Wire format:
  *   once per client: 16-byte header {u32 magic 'FBTP', u32 w, u32 h, u32 bpp=16}
- *   per frame:       u32 payload_len, then RLE pairs {u16 run_count, u16 rgb565} covering w*h px
- * RLE crushes the mostly-black OSD (~4MB raw -> ~tens of KB). Follows vinfo.yoffset for paging.
+ *   per frame:       u32 payload_len, then RLE pairs {u16 run_count, u16 pixel} covering w*h px
+ * RLE crushes the mostly-transparent OSD (~4MB raw -> ~tens of KB). Follows vinfo.yoffset for paging.
  * Build: zig cc -target aarch64-linux-gnu.2.25 -O2 -s -o build/fbtap device/fbtap.c
  */
 #define _GNU_SOURCE

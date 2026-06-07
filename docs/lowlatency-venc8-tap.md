@@ -7,8 +7,8 @@ link, so it costs **zero extra memory** and re-encodes nothing.
 ## Why this exists
 - **RTSP** ([ecm-rtsp-videoout.md](ecm-rtsp-videoout.md)) serves the goggle's `venc8` (chn8) H.265 —
   composited video with OSD burned in — but RTSP adds ~3 s of buffering.
-- The **raw H.265 tap** ([lowlatency-tap.md](lowlatency-tap.md)) is low latency but taps *before*
-  compositing, so it has **no OSD** and needs the two strips stacked.
+- A **raw H.265 tap** *before* compositing would be low latency too, but it has **no OSD** and needs
+  the two decoded strips stacked — so we tap chn8 (post-composite) instead.
 - We tried to make our **own** MJPEG/low-latency encoder: impossible here — during live 1080p video
   the media-memory pool (`/proc/media-mem`) is ~98 MB used / ~10 MB free (fragmented), so a second
   1080p encoder can't allocate (`EN_ERR_NOMEM`). Nothing is trimmable (decode buffers, VbPool,

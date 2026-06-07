@@ -77,6 +77,10 @@ ifconfig usb0 $GOGGLE_IP netmask 255.255.255.0 up
 # point-to-point USB net; BusyBox telnetd, login shell directly (no password).
 telnetd -l /bin/sh -p 23 &
 
+# ---- OSD tap: serve the goggle's fb0 telemetry overlay on tcp:9001 (device/fbtap.c) ----
+# Waits for the framebuffer to come up, then streams the OSD layer to the P1 Video Cast app.
+[ -x /usrdata/fbtap ] && ( while [ ! -e /dev/fb0 ]; do sleep 1; done; /usrdata/fbtap ) &
+
 # ---- rest of the stock GND boot ----
 echo "/tmp/sdcard/core-%e-%p-%s" > /proc/sys/kernel/core_pattern
 ulimit -c unlimited

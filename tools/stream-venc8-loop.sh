@@ -7,7 +7,7 @@ set -u
 HOST="${1:-10.55.0.1}"; PORT="${2:-9000}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-echo "ArtLynkStream — always-on low-latency goggle viewer"
+echo "P1 Video Cast — always-on low-latency goggle viewer"
 echo "Target: tcp://$HOST:$PORT   (plug in USB-C, set the Mac adapter to 10.55.0.2, bind a drone)"
 echo "Close this window to stop."
 echo

@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-ArtLynkStream — low-latency viewer + recorder for the BetaFPV P1 HD goggle's venc8 H.265 USB tap.
+P1 Video Cast — low-latency viewer + recorder for the BetaFPV P1 HD goggle's H.265 USB tap.
 
 One window, three states:
-  • GRAY  "Goggle not connected"  — TCP 10.55.0.1:9000 unreachable (USB unplugged / tap not running)
+  • GRAY  "Goggle not connected"  — tcp://10.55.0.1:9000 unreachable (USB unplugged / tap not running)
   • BLACK "Waiting for drone…"    — goggle reachable but no video yet (no drone bound)
-  • VIDEO                          — streaming the composited feed (+OSD), low latency
-Auto-reconnects, so leaving it running just works: plug in the goggle, bind a drone, video starts.
-Record saves the H.265 (no re-encode) to ~/Movies and remuxes to .mp4 on stop.
+  • VIDEO                          — the composited feed, low latency
 
-Video is decoded in-process with PyAV (the same FFmpeg libraries ffplay uses), with frame-threading
-disabled so frames are shown the instant they decode — matching ffplay's latency. (mpv buffered too
-much on this raw stream.)  Requires:  pip install PySide6 av
-Run:  app/.venv/bin/python app/artlynkstream.py
+Buttons:  OSD overlays the goggle's telemetry (its fb0 layer, tapped over :9001) onto the video;
+OBS re-streams a clean H.264/MPEG-TS on tcp://127.0.0.1:9200 for an OBS Media Source; Record saves
+an .mp4 to ~/Movies (raw H.265 teed live, OSD composited offline on stop — no live slowdown).
+Auto-reconnects, so leaving it running just works: plug in the goggle, bind a drone, video starts.
+
+Video is decoded in-process with PyAV (the FFmpeg libraries ffplay uses) with frame-threading off,
+so frames show the instant they decode (matches ffplay's latency; mpv buffered too much).
+Run:  app/.venv/bin/python app/p1cast.py        (deps: PySide6, av, numpy)
 """
 import os, sys, time, socket, struct, queue, datetime, subprocess, shutil, threading
 import av
@@ -22,10 +24,10 @@ from PySide6.QtGui import QImage, QColor, QPainter, QFont
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QPushButton, QLabel, QFrame)
 
-HOST = os.environ.get("ARTLYNK_HOST", "10.55.0.1")
-PORT = int(os.environ.get("ARTLYNK_PORT", "9000"))
+HOST = os.environ.get("P1CAST_HOST", "10.55.0.1")
+PORT = int(os.environ.get("P1CAST_PORT", "9000"))
 URL  = f"tcp://{HOST}:{PORT}"
-OSD_PORT = int(os.environ.get("ARTLYNK_OSD_PORT", "9001"))   # fb0 OSD tap (device/fbtap.c)
+OSD_PORT = int(os.environ.get("P1CAST_OSD_PORT", "9001"))   # fb0 OSD tap (device/fbtap.c)
 RECDIR = os.path.expanduser("~/Movies")
 DISP_W, DISP_H = 1280, 720          # decode scaled to this for a smooth UI (record stays full-res)
 READ_TIMEOUT = 2.0                  # s; a stalled read (drone dropped) trips this -> reconnect (forces IDR)
@@ -495,14 +497,14 @@ def find_ffmpeg():
                      if os.path.exists(p)), None))
 
 
-class ArtLynkStream(QMainWindow):
+class P1VideoCast(QMainWindow):
     status_msg = Signal(str)          # thread-safe connection-status updates
     save_msg = Signal(str)            # thread-safe save-progress updates (a separate label)
 
     def __init__(self):
         super().__init__()
         self.ffmpeg = find_ffmpeg()
-        self.setWindowTitle("ArtLynkStream")
+        self.setWindowTitle("P1 Video Cast")
         self.resize(1280, 760)
         central = QWidget(); self.setCentralWidget(central)
         lay = QVBoxLayout(central); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
@@ -592,7 +594,7 @@ class ArtLynkStream(QMainWindow):
         if self.rec.isChecked():
             os.makedirs(RECDIR, exist_ok=True)
             ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            base = os.path.join(RECDIR, f"ArtLynkStream-{ts}")
+            base = os.path.join(RECDIR, f"P1Cast-{ts}")
             self.rec_base = base
             self.rec_started = now = time.time()
             self.osd.rec_start = now
@@ -651,8 +653,8 @@ class ArtLynkStream(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("ArtLynkStream")
-    w = ArtLynkStream(); w.show()
+    app.setApplicationName("P1 Video Cast")
+    w = P1VideoCast(); w.show()
     sys.exit(app.exec())
 
 

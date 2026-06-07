@@ -9,7 +9,8 @@ Result: `rtsp://10.55.0.1:554/venc8/stream` — H.265 1920x1080@60, playable in 
 fed into OBS → Virtual Camera to appear as a webcam in any app.
 
 ## Why not a UVC webcam?
-We tried hard; it's a hardware dead end on this model — see [enable-uvc.md](enable-uvc.md).
+We tried hard; it's a hardware dead end on this model (the USB port is device-role-locked — see the
+git history for the investigation).
 The non-Pro's USB-2 `dwc2` controller refuses to enumerate *any* UVC-containing gadget, while
 every non-UVC gadget enumerates fine. The vendor's webcam feature targets their USB-3 (cdns3)
 variants — almost certainly why BetaFPV hides the "UVC Switch" menu on the non-Pro.
@@ -24,8 +25,8 @@ function, which macOS supports natively. So:
 2. Enable the firmware's **encode RTSP** server (`RxEncRtspEnable=1`).
 3. Open the stream on the host.
 
-This is all done by `device/run_dbg.sh`, installed via the stock `run_dbg.sh` boot hook
-(persistent, signature-free — the SD-card OTA path is RSA-signed and can't be repacked).
+This is all done by `device/run_dbg-venc8.sh` (installed as `/usrdata/run_dbg.sh`), via the stock
+boot hook (persistent, signature-free — the SD-card OTA path is RSA-signed and can't be repacked).
 
 ## One-time: get a console (UART)
 - The goggle `DEBUG` header is `GND / TX0 / RX0`, **3.3V TTL**, console **1228800 baud**
@@ -38,17 +39,17 @@ This is all done by `device/run_dbg.sh`, installed via the stock `run_dbg.sh` bo
 
 ## Deploy
 ```sh
-tools/deploy-goggle.sh            # auto-detects /dev/cu.usbserial*
-# or: tools/deploy-goggle.sh /dev/cu.usbserial-XXXX
+tools/deploy-venc8.sh --uart      # build + deploy over the UART (drop --uart to use USB-ECM)
 ```
-It uploads `device/run_dbg.sh`, copies `buildtime` (so `run.sh` honors it), and reboots.
+It uploads the taps + `device/run_dbg-venc8.sh`, copies `buildtime` (so `run.sh` honors it), and reboots.
 
 After it boots:
 1. On the Mac: **System Settings → Network →** the new ECM adapter → **Configure IPv4:
    Manually → 10.55.0.2 / 255.255.255.0** (router blank). `ping 10.55.0.1` to confirm.
 2. **Bind a drone** (air unit) so there's video to encode — without it, RTSP `DESCRIBE`
    returns nothing (H.265 SDP needs the first frame's VPS/SPS/PPS).
-3. `tools/view.sh`  (low-latency ffplay), or VLC → `rtsp://10.55.0.1:554/venc8/stream`.
+3. `ffplay rtsp://10.55.0.1:554/venc8/stream` or VLC. For low latency, use the venc8 tap instead
+   ([lowlatency-venc8-tap.md](lowlatency-venc8-tap.md)).
 
 ## Verify from the host
 ```sh
@@ -60,7 +61,7 @@ ffmpeg  -rtsp_transport tcp -i rtsp://10.55.0.1:554/venc8/stream -frames:v 1 -up
 - Stock baseline: delete the hook and reboot —
   `tools/goggle-uart.py run "rm -f /usrdata/run_dbg.sh; reboot"`.
 - A firmware upgrade auto-wipes `/usrdata` (buildtime mismatch) → reverts to stock on its own;
-  just re-run `deploy-goggle.sh` to reinstall.
+  just re-run `deploy-venc8.sh` to reinstall.
 
 ## Gotchas / known issues
 - **Enable ONLY `RxEncRtspEnable`.** Setting `RxRtspEnable` too makes two servers fight over
@@ -68,15 +69,12 @@ ffmpeg  -rtsp_transport tcp -i rtsp://10.55.0.1:554/venc8/stream -frames:v 1 -up
   `Accept connection error: Bad file descriptor` (drowns the UART, spins CPU). If you hit a
   flood, the UART upload won't survive it — stop the source first, heavily byte-paced:
   `killall -9 arlink_daemon arlink_fpv`, then fix files.
-- **Latency + slow start = venc8's long GOP.** venc8 (the RTSP re-encoder) emits keyframes only
-  rarely, so a client joins mid-GOP and must wait for the next IDR. VLC buffers and waits (hence
-  the seconds of latency); ffplay shows `Could not find ref with POC N / Skipping undecodable
-  NALU` and won't open its window until a keyframe arrives. Do NOT use `-framedrop`/`-fflags
-  nobuffer` with ffplay here — they stop it from ever locking a keyframe (no window). The proper
-  fix is to shorten venc8's GOP / force an IDR on connect — TODO, needs RE of `gstRtspEncAttr.gop`
-  / a direct `AR_MPI_VENC_RequestIDR(chn 8)`. Note: `bdcmd ... -rec_set gop N` is the SD recorder
-  (venc chn 4), NOT venc8; and the FSM IDR messages (`-fsm_debug -message_id 6/8`) target the
-  wireless air-unit path, not venc8. VLC is the reliable viewer until this is tuned.
+- **Latency + slow start = venc8's long GOP.** venc8 emits keyframes only rarely, so an RTSP client
+  joins mid-GOP and must wait for the next IDR (hence the seconds of latency; ffplay shows `Skipping
+  undecodable NALU` until a keyframe arrives). The **venc8 tap**
+  ([lowlatency-venc8-tap.md](lowlatency-venc8-tap.md)) fixes this by forcing
+  `AR_MPI_VENC_RequestIDR(8,1)` on connect and serving the same stream over plain TCP — use it for low
+  latency. VLC is the reliable viewer for plain RTSP.
 - **Stops after a few connect/disconnect cycles** (needs a goggle reboot). The mini-RTSP server
   appears to leak the venc session across SETUP/TEARDOWN. Not yet fixed.
 - USB-C: the goggle's port has finicky role/CC detection (a USB-C HDMI hub once made it reboot).

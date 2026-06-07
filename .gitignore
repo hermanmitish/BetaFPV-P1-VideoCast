@@ -1,13 +1,13 @@
 # firmware images (large, not for VCS)
-images/*.img
 *.img
-# macOS / editor cruft
-.DS_Store
-# build artifacts (legacy)
-*.o
-build/
-toolchain/
-arlink_stream
 # python
+.venv/
 __pycache__/
 *.pyc
+# build artifacts
+*.o
+build/
+# macOS / editor cruft
+.DS_Store
+# local Claude Code config (permissions allowlist — not for VCS)
+.claude/
