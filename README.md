@@ -47,7 +47,7 @@ drone → `tools/view.sh`.
 | `device/run_dbg-venc8.sh` + `device/venc8tap.c` | venc8 tap: RTSP boot + shim teeing chn8 H.265 to TCP:9000 |
 | `tools/deploy-venc8.sh` / `tools/view-venc8.sh` | deploy (net/UART) / view the low-latency venc8 tap |
 | `app/` (`artlynkstream.py`) | **ArtLynkStream** GUI viewer+recorder for the venc8 tap (PySide6 + PyAV) |
-| `tools/goggle.py` | UART console helper (`upload`/`bupload`/`run`/`reboot`/`shell`) at 1228800 |
+| `tools/goggle-uart.py` | UART console helper (`upload`/`bupload`/`run`/`reboot`/`shell`) at 1228800 |
 | `tools/goggle-net.py` | network helper over USB-ECM (`run`/`push`/`shell` via telnet + wget) |
 | `tools/view.sh` | low-latency `ffplay` of the RTSP stream |
 | `tools/view-tap.sh` / `view-tap.py` / `serial_to_pipe.py` | stack the two raw strips into a 1080p view |

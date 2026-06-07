@@ -14,7 +14,7 @@ VENV="$HERE/.venv"
 if [ ! -x "$VENV/bin/python" ]; then
   echo "[*] creating venv with pyserial..."; python3 -m venv "$VENV"; "$VENV/bin/pip" install -q pyserial
 fi
-PY="$VENV/bin/python"; G="$HERE/tools/goggle.py"
+PY="$VENV/bin/python"; G="$HERE/tools/goggle-uart.py"
 
 command -v zig >/dev/null || { echo "need zig (brew install zig) to cross-compile the hook"; exit 1; }
 echo "[*] building libvideotap.so (aarch64/glibc-2.25)..."

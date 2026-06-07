@@ -27,7 +27,7 @@ view on the host. Verified to reconstruct a clean **1920×1080**.
 tools/deploy-tap.sh          # builds the .so (zig), uploads over UART, reboots
 ```
 Transfers go over the **DEBUG UART** (no ECM needed): the boot script as text, the `.so` as a
-`printf`-hex binary upload (`goggle.py bupload`). Requires a UART console (see
+`printf`-hex binary upload (`goggle-uart.py bupload`). Requires a UART console (see
 [ecm-rtsp-videoout.md](ecm-rtsp-videoout.md)) and `zig` (`brew install zig`).
 
 ## View

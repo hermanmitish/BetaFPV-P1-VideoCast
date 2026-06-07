@@ -23,7 +23,7 @@ if [ ! -x "$VENV/bin/python" ]; then
   "$VENV/bin/pip" install -q pyserial
 fi
 PY="$VENV/bin/python"
-SER="$HERE/tools/goggle.py"
+SER="$HERE/tools/goggle-uart.py"
 
 echo "[*] uploading run_dbg.sh ..."
 "$PY" "$SER" "${PYARGS[@]}" upload "$HERE/device/run_dbg.sh" /usrdata/run_dbg.sh

@@ -34,7 +34,7 @@ This is all done by `device/run_dbg.sh`, installed via the stock `run_dbg.sh` bo
   adapter **RX←TX0**, **TX→RX0**, **GND→GND**; leave the adapter's VCC disconnected.
 - **A solid ground is critical.** A flaky GND gives ~50% garbled bytes and a fake "shell" that
   only echoes your own typing (TX bleeding into RX). If reads are garbage, fix GND first.
-- `screen` on macOS mangles 1228800; use the Python tools here (`tools/goggle.py`).
+- `screen` on macOS mangles 1228800; use the Python tools here (`tools/goggle-uart.py`).
 
 ## Deploy
 ```sh
@@ -58,7 +58,7 @@ ffmpeg  -rtsp_transport tcp -i rtsp://10.55.0.1:554/venc8/stream -frames:v 1 -up
 
 ## Revert / recover
 - Stock baseline: delete the hook and reboot —
-  `tools/goggle.py run "rm -f /usrdata/run_dbg.sh; reboot"`.
+  `tools/goggle-uart.py run "rm -f /usrdata/run_dbg.sh; reboot"`.
 - A firmware upgrade auto-wipes `/usrdata` (buildtime mismatch) → reverts to stock on its own;
   just re-run `deploy-goggle.sh` to reinstall.
 

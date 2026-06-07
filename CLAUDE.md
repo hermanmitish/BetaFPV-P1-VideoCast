@@ -28,7 +28,7 @@ LD_PRELOAD). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md) and
   that interposes `AR_MPI_VENC_GetStream`, tees the existing chn8 H.265 (composited + OSD) out
   `tcp://10.55.0.1:9000`, forcing a keyframe (`AR_MPI_VENC_RequestIDR(8,1)`) on each client connect.
   Low latency, zero extra memory. Deploy `tools/deploy-venc8.sh`, view `tools/view-venc8.sh`.
-- `tools/goggle.py` — UART console helper (`upload` text / `bupload` binary / `run`/`reboot`/`shell`).
+- `tools/goggle-uart.py` — UART console helper (`upload` text / `bupload` binary / `run`/`reboot`/`shell`).
 - `tools/goggle-net.py` — fast deploy/run over the USB-ECM link (no UART): `run`/`shell` via BusyBox
   `telnetd` (10.55.0.1:23, `-l /bin/sh`, started by `run_dbg.sh`), `push` via the goggle `wget`-ing
   from a temp HTTP server on the Mac's 10.55.0.2. UART only needed for first deploy / recovery.
@@ -44,8 +44,8 @@ LD_PRELOAD). See [docs/ecm-rtsp-videoout.md](docs/ecm-rtsp-videoout.md) and
 - 3.3V USB-TTL adapter, crossed (adapter RX←TX0, TX→RX0, GND→GND, VCC unconnected).
 - **Solid GND is critical** — a flaky ground gives ~50% garbled bytes and a fake shell that
   only echoes your input (TX bleeding into RX). Fix GND before suspecting anything else.
-- macOS `screen` mangles 1228800; use `tools/goggle.py`. The link drops bytes on long bursts,
-  so `goggle.py upload` disables device echo + byte-paces + md5-verifies (retried).
+- macOS `screen` mangles 1228800; use `tools/goggle-uart.py`. The link drops bytes on long bursts,
+  so `goggle-uart.py upload` disables device echo + byte-paces + md5-verifies (retried).
 
 ## Persistence (no re-flash)
 - `/usr/usrdata/run.sh` runs `/usrdata/run_dbg.sh` **instead of** normal boot when
@@ -93,5 +93,5 @@ Use `ubireader_extract_images` to get the `.ubifs`, then a patched reader. v2.0.
   + chn1 (1920×552), 32px overlap. The shim interposes `AR_MPI_VDEC_SendStream(chn, pstStream, ms)`
   (interposable across libs); `VDEC_STREAM_S` = `+0x00 u32 len`, `+0x1c u8* data` (virtual, H.265
   Annex-B). It forwards from a clean keyframe. Start `view-tap.sh` BEFORE powering the drone.
-- Binary files reach the device over UART via `goggle.py bupload` (printf-hex; device has no
+- Binary files reach the device over UART via `goggle-uart.py bupload` (printf-hex; device has no
   base64/xxd). The ECM-network `wget` path is flaky (macOS may not bind ECM on the tap gadget).

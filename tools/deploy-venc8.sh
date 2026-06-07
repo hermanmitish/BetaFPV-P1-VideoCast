@@ -3,7 +3,7 @@
 #
 # Builds device/venc8tap.c (needs zig) and deploys it + the venc8 boot config. Deploys over the
 # USB-ECM network (telnet + wget via tools/goggle-net.py) when the goggle is already running the
-# RTSP/telnet config; falls back to UART (tools/goggle.py) with `--uart`.
+# RTSP/telnet config; falls back to UART (tools/goggle-uart.py) with `--uart`.
 #
 # After it boots (with a drone bound so chn8 encodes), view with:  tools/view-venc8.sh
 set -euo pipefail
@@ -18,7 +18,7 @@ zig cc -target aarch64-linux-gnu.2.25 -shared -fPIC -O2 -s \
 
 if [ "$USE_UART" = "1" ]; then
   VENV="$HERE/.venv"; [ -x "$VENV/bin/python" ] || { python3 -m venv "$VENV"; "$VENV/bin/pip" install -q pyserial; }
-  PY="$VENV/bin/python"; G="$HERE/tools/goggle.py"
+  PY="$VENV/bin/python"; G="$HERE/tools/goggle-uart.py"
   echo "[*] uploading over UART..."
   "$PY" "$G" bupload "$HERE/build/venc8tap.so" /usrdata/libvenc8tap.so
   "$PY" "$G" upload  "$HERE/device/run_dbg-venc8.sh" /usrdata/run_dbg.sh
