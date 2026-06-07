@@ -1,3 +1,0 @@
-# Adds this external tree's packages to Buildroot's menuconfig (under "External options").
-source "$BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH/package/artlynk-view/Config.in"
-source "$BR2_EXTERNAL_ARTLYNK_BRIDGE_PATH/package/uvc-gadget/Config.in"

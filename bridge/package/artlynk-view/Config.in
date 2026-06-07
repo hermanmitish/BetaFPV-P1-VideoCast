@@ -1,9 +1,0 @@
-config BR2_PACKAGE_ARTLYNK_VIEW
-	bool "artlynk-view"
-	depends on BR2_PACKAGE_GSTREAMER1
-	help
-	  ArtLynk bridge viewer. Waits for the goggle's venc8 H.265 tap
-	  (tcp://10.55.0.1:9000), decodes it (Amlogic V4L2 HEVC, or software
-	  fallback) and renders straight to KMS/DRM on HDMI. Reconnects forever.
-
-	  https://github.com/  (this repo's bridge/)
